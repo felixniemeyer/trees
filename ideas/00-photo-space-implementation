@@ -1,0 +1,215 @@
+- pass photo texture to artwork 
+
+- triangle strip area
+
+- photo mode: 
+alright! here, we are developping web mapper and a new artworks side by side.
+
+the artwork uses webgl2. The gl context is provided by the web-mapper framework.
+
+The web mapper is already somehow prepared to work with photos.
+These photos are usually taken from the projectors perspective and used to prepare mappings before
+bringing them to the site.
+
+So web mapper should allow photo upload - let's just make keypress p open the upload dialog.
+store the photo in the indexdb too.
+
+then implement the photoPos for the points.
+points have a position in photo space and a position in projection space.
+
+there should be a way to switch between photo space and proj space.
+
+in photo space, the photo is being shown (fill the screen). coordinates can be in photo uv space.
+Zooming in and out should be possible.
+
+Renderers and handlers have to implemented for photo mode.
+
+# follow up: 
+
+Open Questions
+
+  1. Photo Upload Storage: Should the uploaded photo be stored as:
+    - Base64 string in IndexedDB?
+    - Blob in IndexedDB?
+    - Or should we create a separate object store for photos?
+  2. Point Photo Coordinates: Currently points have position: vec2 (NDC) and depth: number. For photo
+  space, should I:
+    - Add a photoPosition: vec2 | null property directly to the Point class?
+    - Or keep photo positions separate in a mapping structure?
+    - Should photo positions be in UV space [0,1] or pixel coordinates?
+  3. Photo/Proj Space Switching: How should users switch between modes?
+    - Keyboard shortcut (e.g., press 'M' for mode)?
+    - UI toggle button?
+    - Automatic based on context?
+  4. Photo Space Zoom/Pan: Should this use:
+    - Mouse wheel for zoom + drag to pan?
+    - Same interaction patterns as projection space?
+    - Should zoom be centered on mouse cursor position?
+  5. Photo Mode Rendering: In photo mode, should we:
+    - Still show grid surfaces between points (if they have photo positions)?
+    - Or only show handles (points)?
+    - Should the photo be in a background layer with points rendered on top?
+  6. Point Correspondence Workflow: When placing points in photo space:
+    - Should points automatically get a photo position when dragged in photo mode?
+    - Do we need to explicitly "link" photo and proj positions, or is having both coordinates enough?
+    - Should the camera transformation system automatically use points that have both positions?
+  7. Backward Compatibility: How should we handle existing saved areas that don't have photo positions
+   yet?
+
+Answers: 
+
+1. blob!
+2. let's call it photoUv - directly to the point class. uv [0,1]
+3. ah right! web-mapper leaves it up to the artwork client to call functions to switch modes. same for
+photo mode. make photo mode default init mode and provide a function to switch back and forth
+4. yes, mouse wheel for zoom, right click to pan. left click = same interaciton patterns for photoUv
+of points. Zoom around mouse cursor position
+5. also render the surface with some transparency
+6. yea, good question. The transformation between photo space and proj space is initially assumed to
+be identity. when we move points in photo space, we move them according to the transformation in proj
+space. When we move them in projection space, we move them according to the transformation in the
+photo space. We do that as long as not both points are manually dragged. So points should have an
+initial position (projPos == photoUv). if only one of photoUv or projPos is defined, the value of the
+other is calculated based on the defined one. We have just two coordinates: ohotoUv and projPos and
+two booleans (photoUvSet, projPosSe) which define whether the two positions are user defined. If both
+are user defined, we don't update the other when changing one.
+7. no backward compatibility needed 
+
+
+ ● When the transformation between photo and proj space changes (e.g., after bundle adjustment
+ optimization), should we automatically update points that only have one user-defined position?
+   → Yes, recalculate on transformation change
+ ● Should the 'P' key upload dialog allow selecting multiple photos, or just one photo at a time that
+ replaces the previous one?
+   → leave all key presses up to the artwork app client. just expose a function "setPhoto". write a 
+   minimal web-mapper client app in ./trees that handles the photo upload on P press. 
+ ● When switching modes, should the camera view (zoom/pan in photo mode) be preserved, or reset to
+ default?
+   → Preserve view state
+ ● For the initial identity transformation assumption, should photoUv [0,1] map to projPos NDC [-1,1]
+ directly, or should [0,1] in photo map to [-1,1] in proj?
+   → ahh! let's use [-1,1] for photo space. and then let's not call it photoUv but photoPos
+  
+
+--- 
+
+resulting plan: 
+Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Photo Mode Implementation Plan
+
+ 1. Point Data Structure Enhancement
+
+ File: web-mapper/src/Point.ts
+ - Add photoPos: vec2 property ([-1,1] coordinates)
+ - Add photoPosSet: boolean flag (user-defined photo position)
+ - Add projPosSet: boolean flag (rename current position tracking)
+ - Rename position → projPos for clarity
+ - Add transformation reference to enable automatic recalculation
+ - Update setters to recalculate other position when only one is user-defined
+ - Update serialization for storage
+
+ 2. Photo Storage
+
+ File: web-mapper/src/storage/indexdb.ts
+ - Add new object store photos (key: string, value: Blob)
+ - Add savePhoto(blob: Blob): Promise<void>
+ - Add loadPhoto(): Promise<Blob | null>
+ - Add deletePhoto(): Promise<void>
+
+ 3. View Mode System
+
+ File: web-mapper/src/WebMapper.ts
+ - Add ViewMode type: 'photo' | 'proj'
+ - Add currentMode: ViewMode = 'photo' (default to photo mode)
+ - Add photo view state: { zoom: number, pan: vec2 }
+ - Add setViewMode(mode: ViewMode): void - switch modes, preserve view state
+ - Add setPhoto(blob: Blob): Promise<void> - upload and store photo
+ - Add photo texture loading/management
+ - Update render loop to dispatch to correct renderer based on mode
+
+ 4. Photo Space Rendering
+
+ New files:
+ - web-mapper/src/area-renderers/photo/base.ts - PhotoRenderContext (zoom/pan transforms)
+ - web-mapper/src/area-renderers/photo/grid.ts - Grid renderer for photo mode
+ - web-mapper/src/area-renderers/photo/point.ts - Point renderer for photo mode
+ - web-mapper/src/shaders/area-renderers/photo/background.vs/fs - Photo background shader
+ - web-mapper/src/shaders/area-renderers/photo/grid/handles.vs/fs - Point handles in photo space
+ - web-mapper/src/shaders/area-renderers/photo/grid/surfaces.vs/fs - Semi-transparent grid surface
+
+ PhotoRenderContext:
+ - Manage zoom level and pan offset
+ - Provide view matrix for shaders
+ - Convert mouse coords to photo space [-1,1]
+
+ 5. Photo Space Interaction Handlers
+
+ New files:
+ - web-mapper/src/area-interaction-handlers/photo/base.ts - Context interface
+ - web-mapper/src/area-interaction-handlers/photo/grid.ts - Grid dragging in photo space
+ - web-mapper/src/area-interaction-handlers/photo/point.ts - Point dragging in photo space
+
+ Implement:
+ - Left click + drag: Move points (sets photoPosSet = true, recalculates projPos via transform)
+ - Right click + drag: Pan photo
+ - Mouse wheel: Zoom around cursor position
+ - Shift modifier: Precision mode (0.2x sensitivity)
+
+ 6. Transformation Integration
+
+ File: web-mapper/src/CameraTransformation.ts
+ - Add listener system for transformation changes
+ - Add transformPhotoToProj(photoPos: vec2, depth: number): vec2 - simplified for 2D
+ - Add transformProjToPhoto(projPos: vec2, depth: number): vec2 - inverse transform
+ - When transformation updates, notify WebMapper to recalculate auto-positioned points
+
+ File: web-mapper/src/WebMapper.ts
+ - Subscribe to transformation updates
+ - When transformation changes: loop through all points, recalculate positions where only one flag is set
+
+ 7. Example Client App
+
+ New directory: web-mapper/trees/
+ - Copy structure from example-app/
+ - Add P key handler to open file upload dialog
+ - Call mapper.setPhoto(blob) on upload
+ - Add M key handler to toggle between photo/proj modes
+ - Minimal setup to demonstrate photo workflow
+
+ 8. Area Serialization Updates
+
+ Files: web-mapper/src/areas/grid-area.ts, point-area.ts
+ - Update toSerializable() to include photoPos, photoPosSet, projPosSet for each point
+ - Update fromSerializable() to restore these properties
+ - Ensure backward compatibility is not needed (fresh start)
+
+ 9. WebMapper API Updates
+
+ File: web-mapper/src/WebMapper.ts
+ Public API additions:
+ - setPhoto(blob: Blob): Promise<void>
+ - getPhoto(): Promise<Blob | null>
+ - setViewMode(mode: 'photo' | 'proj'): void
+ - getViewMode(): 'photo' | 'proj'
+
+ Implementation Order
+
+ 1. Point data structure (foundation)
+ 2. Photo storage (IndexedDB)
+ 3. View mode system skeleton
+ 4. Photo rendering infrastructure (context, background shader)
+ 5. Photo renderers (grid, point)
+ 6. Photo interaction handlers
+ 7. Transformation integration with auto-recalculation
+ 8. Example trees app
+ 9. Testing and refinement
+
+ ---
+
+Ideas for the future: 
+
+- new project per uploaded photo
+- while in photo mode, don't render artwork 
+- transformation is identity as long as we're working on trees
+

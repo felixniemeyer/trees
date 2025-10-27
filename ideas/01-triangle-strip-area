@@ -1,0 +1,27 @@
+
+> okay, the tree artwork does not define any areas yet, right? 
+then let's implement triangle strip areas now!
+For triangle strip areas there is a crucial difference! The amount of points is not defined from the 
+beginning, instead, users can double click to create a new point or double click to remove a point. 
+The surface is rendered as a triangle strip with the points as vertices in the order of creation. 
+let's implement the necessary renderers and handlers. 
+and in the example app let's say there is one triangle strip area with an initial 4 points (square 
+-0.5 to 0.5). 
+
+what do you think? 
+
+Open questions? Anything to clarify? 
+
+● Great idea! Let me think through the triangle strip area implementation. Here are my open questions:
+                                                                                                     
+● User answered Claude's questions:
+  ⎿
+     · How should point insertion work in a triangle strip? When user double-clicks on an edge, where 
+     should the new point be inserted in the strip order? → insert at mouse position possibly snap to 
+     nearby points if snapping is active
+     · For point deletion in triangle strips, should we allow deleting any point, or only endpoints? →
+      Only endpoints
+     · Should triangle strip areas support the grid-like snapping behavior, or point-to-point 
+     snapping? → snap to all other points as other points snap to triangle strip points. check how 
+     snapping is implemented, should be setup for cross area type snapping
+     · What visual appearance should the triangle strip surface have? → Wireframe only
