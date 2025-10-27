@@ -16,9 +16,9 @@ const mapper = new WebMapper(canvas, {
 // Enable edit mode so we can manipulate points
 mapper.setEditMode(true)
 
-// Load or create state
-const state = await mapper.loadOrCreateState(() => ({
-  main: new TriangleStripArea(
+// Load or create main triangle strip area
+const main = await mapper.loadOrCreateArea('main', () =>
+  new TriangleStripArea(
     [
       new Point(vec2.fromValues(-0.5, -0.5), 0), // bottom-left
       new Point(vec2.fromValues(0.5, -0.5), 0),  // bottom-right
@@ -28,7 +28,7 @@ const state = await mapper.loadOrCreateState(() => ({
     vec3.fromValues(0.3, 0.8, 0.6), // Green color for trees
     0 // No rotation
   )
-}))
+)
 
 // Set render callback
 mapper.setRenderCallback((_deltaTime) => {
@@ -54,12 +54,27 @@ document.addEventListener('keydown', async (e) => {
       const file = (event.target as HTMLInputElement).files?.[0]
       if (!file) return
 
-      // Read file as blob
-      const blob = new Blob([await file.arrayBuffer()], { type: file.type })
+      console.log('Photo selected:', file.name)
 
-      // TODO: Call mapper.setPhoto(blob) once WebMapper photo integration is complete
-      console.log('Photo selected:', file.name, 'Size:', blob.size, 'bytes')
-      console.log('Photo upload functionality will be wired up once WebMapper photo mode is integrated')
+      // Create image element and load the file
+      const image = new Image()
+      const url = URL.createObjectURL(file)
+
+      image.onload = () => {
+        // Set photo in mapper (automatically switches to photo mode)
+        mapper.setPhoto(image)
+        console.log('Photo loaded and set. Switched to photo mode.')
+
+        // Clean up object URL
+        URL.revokeObjectURL(url)
+      }
+
+      image.onerror = () => {
+        console.error('Failed to load photo')
+        URL.revokeObjectURL(url)
+      }
+
+      image.src = url
     }
 
     // Trigger file dialog
@@ -73,4 +88,4 @@ console.log('- Left click + drag: Move points')
 console.log('- Double-click empty space: Add new point')
 console.log('- Double-click endpoint: Remove endpoint')
 console.log('- Shift + drag: Precision mode')
-console.log('- P key: Upload photo (coming soon)')
+console.log('- P key: Upload photo')
