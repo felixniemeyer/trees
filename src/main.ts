@@ -45,6 +45,9 @@ mapper.setRenderCallback((_deltaTime) => {
   // WebMapper automatically renders areas in edit mode
 })
 
+// Start render loop
+mapper.start()
+
 // Photo upload handler - triggered by 'P' key
 document.addEventListener('keydown', async (e) => {
   if (e.key === 'p' || e.key === 'P') {
