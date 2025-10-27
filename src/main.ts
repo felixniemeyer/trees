@@ -8,20 +8,6 @@ if (!canvas) {
   throw new Error('Canvas element not found')
 }
 
-// Create triangle strip area with 4 points forming a square [-0.5, 0.5]
-const stripPoints: Point[] = [
-  new Point(vec2.fromValues(-0.5, -0.5), 0), // bottom-left
-  new Point(vec2.fromValues(0.5, -0.5), 0),  // bottom-right
-  new Point(vec2.fromValues(-0.5, 0.5), 0),  // top-left
-  new Point(vec2.fromValues(0.5, 0.5), 0),   // top-right
-]
-
-const triangleStripArea = new TriangleStripArea(
-  stripPoints,
-  vec3.fromValues(0.3, 0.8, 0.6), // Green color for trees
-  0 // No rotation
-)
-
 // Create WebMapper
 const mapper = new WebMapper(canvas, {
   artworkId: 'trees'
@@ -30,8 +16,19 @@ const mapper = new WebMapper(canvas, {
 // Enable edit mode so we can manipulate points
 mapper.setEditMode(true)
 
-// Add triangle strip area
-mapper.addArea(triangleStripArea)
+// Load or create state
+const state = await mapper.loadOrCreateState(() => ({
+  main: new TriangleStripArea(
+    [
+      new Point(vec2.fromValues(-0.5, -0.5), 0), // bottom-left
+      new Point(vec2.fromValues(0.5, -0.5), 0),  // bottom-right
+      new Point(vec2.fromValues(-0.5, 0.5), 0),  // top-left
+      new Point(vec2.fromValues(0.5, 0.5), 0),   // top-right
+    ],
+    vec3.fromValues(0.3, 0.8, 0.6), // Green color for trees
+    0 // No rotation
+  )
+}))
 
 // Set render callback
 mapper.setRenderCallback((_deltaTime) => {
@@ -44,9 +41,6 @@ mapper.setRenderCallback((_deltaTime) => {
 
   // WebMapper automatically renders areas in edit mode
 })
-
-// Start render loop
-mapper.start()
 
 // Photo upload handler - triggered by 'P' key
 document.addEventListener('keydown', async (e) => {
