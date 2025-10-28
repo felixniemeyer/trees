@@ -4,19 +4,38 @@ import ShaderProgram from "web-mapper/dist/utils/shader-program"
 
 import flowVs from "./shaders/triangle-strip-flow.vs"
 import flowFs from "./shaders/triangle-strip-flow.fs"
+import textureMappingVs from "./shaders/texture-mapping.vs"
+import textureMappingFs from "./shaders/texture-mapping.fs"
 
 export class TriangleStripArtworkRenderer {
   private program: ShaderProgram
+  private textureMappingProgram: ShaderProgram
   private vao: WebGLVertexArrayObject
   private positionBuffer: WebGLBuffer
   private uvBuffer: WebGLBuffer
+
+  // Texture mapping VAO and buffers
+  private textureMappingVAO: WebGLVertexArrayObject
+  private textureMappingPositionBuffer: WebGLBuffer
+  private textureMappingPhotoCoordBuffer: WebGLBuffer
 
   private generatedTexture: WebGLTexture
   private textureWidth = 0
   private textureHeight = 0
 
   private vertexCount = 0
-  private unsubscribe?: () => void
+  private unsubscribeArea?: () => void
+  private unsubscribePhoto?: () => void
+
+  // Photo data
+  private photoTexture: WebGLTexture | null = null
+  private photoDimensions: vec2 | null = null
+
+  // Regeneration flag to avoid duplicate work
+  private needsRegeneration = false
+
+  // Resolution for viewport management
+  private resolution = vec2.create()
 
   // Distance calculation results
   private evenDistances: number[] = []
@@ -24,15 +43,26 @@ export class TriangleStripArtworkRenderer {
   private normalizedEvenUVs: number[] = []
   private normalizedOddUVs: number[] = []
 
-  constructor(
-    private area: TriangleStripArea,
-    private gl: WebGL2RenderingContext,
-    private renderContext: ProjRenderContext,
-    private webMapper: WebMapper
-  ) {
-    this.program = new ShaderProgram(this.gl, flowVs, flowFs)
+  // Constructor parameters stored as fields
+  private area: TriangleStripArea
+  private gl: WebGL2RenderingContext
+  private renderContext: ProjRenderContext
+  private webMapper: WebMapper
 
-    // Create VAO for triangle strip
+  constructor(
+    area: TriangleStripArea,
+    gl: WebGL2RenderingContext,
+    renderContext: ProjRenderContext,
+    webMapper: WebMapper
+  ) {
+    this.area = area
+    this.gl = gl
+    this.renderContext = renderContext
+    this.webMapper = webMapper
+    this.program = new ShaderProgram(this.gl, flowVs, flowFs)
+    this.textureMappingProgram = new ShaderProgram(this.gl, textureMappingVs, textureMappingFs)
+
+    // Create VAO for triangle strip artwork rendering
     this.vao = this.gl.createVertexArray()!
     this.gl.bindVertexArray(this.vao)
 
@@ -50,32 +80,51 @@ export class TriangleStripArtworkRenderer {
 
     this.gl.bindVertexArray(null)
 
+    // Create VAO for texture mapping
+    this.textureMappingVAO = this.gl.createVertexArray()!
+    this.gl.bindVertexArray(this.textureMappingVAO)
+
+    // Position buffer (vec2 in NDC)
+    this.textureMappingPositionBuffer = this.gl.createBuffer()!
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.textureMappingPositionBuffer)
+    this.gl.enableVertexAttribArray(0)
+    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0)
+
+    // Photo pixel coordinate buffer (vec2)
+    this.textureMappingPhotoCoordBuffer = this.gl.createBuffer()!
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.textureMappingPhotoCoordBuffer)
+    this.gl.enableVertexAttribArray(1)
+    this.gl.vertexAttribPointer(1, 2, this.gl.FLOAT, false, 0, 0)
+
+    this.gl.bindVertexArray(null)
+
     // Create texture for photo mapping
     this.generatedTexture = this.gl.createTexture()!
 
     // Subscribe to area changes
-    this.unsubscribe = this.area.subscribe(() => {
-      this.updateGeometry()
+    this.unsubscribeArea = this.area.subscribe(() => {
+      this.needsRegeneration = true
     })
 
-    // Initial geometry update
-    this.updateGeometry()
+    // Subscribe to photo changes
+    this.unsubscribePhoto = this.webMapper.subscribeToPhotoChanges((texture, dimensions) => {
+      this.photoTexture = texture
+      this.photoDimensions = dimensions
+      this.needsRegeneration = true
+    })
   }
 
-  private updateGeometry() {
-    this.calculateDistances()
+  setResolution(res: vec2) {
+    this.resolution = vec2.clone(res)
+  }
+
+  private updateGeometry(dimensions: vec2) {
+    this.calculateDistances(dimensions)
     this.updateTexture()
     this.updateVertexBuffers()
   }
 
-  private calculateDistances() {
-    const photoData = this.webMapper.getPhoto()
-    if (!photoData) {
-      console.warn('No photo data available for artwork renderer')
-      return
-    }
-
-    const { dimensions } = photoData
+  private calculateDistances(dimensions: vec2) {
     const points = this.area.points
     const pointCount = points.length
 
@@ -124,11 +173,6 @@ export class TriangleStripArtworkRenderer {
   }
 
   private updateTexture() {
-    const photoData = this.webMapper.getPhoto()
-    if (!photoData) return
-
-    const { texture: photoTexture, dimensions } = photoData
-
     if (this.textureWidth === 0 || this.textureHeight === 0) return
 
     const gl = this.gl
@@ -163,20 +207,86 @@ export class TriangleStripArtworkRenderer {
       return
     }
 
-    // Set viewport to texture size
+    // Set viewport to texture dimensions for texture rendering
     gl.viewport(0, 0, this.textureWidth, this.textureHeight)
 
     // Clear texture
     gl.clearColor(0, 0, 0, 1)
     gl.clear(gl.COLOR_BUFFER_BIT)
 
-    // TODO: Render photo mapped onto texture using pixel positions and normalized distances
-    // For now, just copy the photo texture directly
-    // This needs to sample the photo at the correct positions along the strip
+    // Render photo mapped onto texture using pixel positions and normalized distances
+    if (!this.photoTexture || !this.photoDimensions) {
+      // No photo available, just leave texture black
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.deleteFramebuffer(framebuffer)
+      return
+    }
 
-    // Restore framebuffer and viewport
+    const points = this.area.points
+    const pointCount = points.length
+
+    if (pointCount < 2) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.deleteFramebuffer(framebuffer)
+      return
+    }
+
+    // Build vertex data: positions in NDC and photo pixel coordinates
+    // x = -1 for left column (even indices), x = 1 for right column (odd indices)
+    // y = normalizedDistance * 2 - 1 (converting [0,1] to [-1,1])
+    const positions: number[] = []
+    const photoPixelCoords: number[] = []
+
+    // Convert photoPos to pixel space for all points
+    const pixelPositions: vec2[] = []
+    for (let i = 0; i < pointCount; i++) {
+      const photoPos = points[i]!.photoPos
+      const pixelPos = vec2.fromValues(
+        (photoPos[0] * 0.5 + 0.5) * this.photoDimensions[0],
+        (photoPos[1] * 0.5 + 0.5) * this.photoDimensions[1]
+      )
+      pixelPositions.push(pixelPos)
+    }
+
+    // Build triangle strip: alternate between even (left) and odd (right) points
+    for (let i = 0; i < pointCount; i++) {
+      const isEven = i % 2 === 0
+      const x = isEven ? -1.0 : 1.0
+      const normalizedY = isEven ? this.normalizedEvenUVs[i]! : this.normalizedOddUVs[i]!
+      const y = normalizedY * 2.0 - 1.0
+
+      positions.push(x, y)
+      photoPixelCoords.push(pixelPositions[i]![0], pixelPositions[i]![1])
+    }
+
+    // Update buffers
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.textureMappingPositionBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.textureMappingPhotoCoordBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(photoPixelCoords), gl.DYNAMIC_DRAW)
+
+    // Render using texture mapping shader
+    this.textureMappingProgram.use()
+
+    // Set uniforms
+    gl.uniform2fv(this.textureMappingProgram.uniLocs.photoDimensions, this.photoDimensions as Float32Array)
+
+    // Bind photo texture
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.photoTexture)
+    gl.uniform1i(this.textureMappingProgram.uniLocs.photoTexture, 0)
+
+    // Draw triangle strip
+    gl.bindVertexArray(this.textureMappingVAO)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, pointCount)
+    gl.bindVertexArray(null)
+
+    // Cleanup: restore framebuffer
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     gl.deleteFramebuffer(framebuffer)
+
+    // Note: viewport will be set properly in render() method
   }
 
   private updateVertexBuffers() {
@@ -218,21 +328,32 @@ export class TriangleStripArtworkRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.DYNAMIC_DRAW)
   }
 
-  render(time: number) {
-    if (this.vertexCount < 2) return
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null) {
+    // Check if we need to regenerate geometry
+    if (this.needsRegeneration && this.photoTexture && this.photoDimensions) {
+      this.updateGeometry(this.photoDimensions)
+      this.needsRegeneration = false
+    }
 
-    const photoData = this.webMapper.getPhoto()
-    if (!photoData) return
+    console.log('Rendering TriangleStripArtworkRenderer with vertex count:', this.vertexCount)
+
+    if (this.vertexCount < 2 || !this.photoTexture) return
 
     const gl = this.gl
+
+    // Bind target framebuffer and set viewport
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFramebuffer)
+    gl.viewport(0, 0, this.resolution[0], this.resolution[1])
 
     this.program.use()
 
     // Set uniforms
+    const projMatrix = this.renderContext.getProjectionMatrix()
+    console.log('Projection matrix:', projMatrix)
     gl.uniformMatrix4fv(
       this.program.uniLocs.projectionMatrix,
       false,
-      this.renderContext.getProjectionMatrix()
+      projMatrix
     )
     gl.uniform1f(this.program.uniLocs.time, time)
 
@@ -254,12 +375,18 @@ export class TriangleStripArtworkRenderer {
   }
 
   destroy() {
-    if (this.unsubscribe) {
-      this.unsubscribe()
+    if (this.unsubscribeArea) {
+      this.unsubscribeArea()
+    }
+    if (this.unsubscribePhoto) {
+      this.unsubscribePhoto()
     }
     this.gl.deleteVertexArray(this.vao)
     this.gl.deleteBuffer(this.positionBuffer)
     this.gl.deleteBuffer(this.uvBuffer)
+    this.gl.deleteVertexArray(this.textureMappingVAO)
+    this.gl.deleteBuffer(this.textureMappingPositionBuffer)
+    this.gl.deleteBuffer(this.textureMappingPhotoCoordBuffer)
     this.gl.deleteTexture(this.generatedTexture)
   }
 }

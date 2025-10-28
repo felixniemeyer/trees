@@ -18,4 +18,7 @@ void main() {
 
   // Sample the photo texture
   fragColor = texture(photoTexture, scrollUv);
+
+  //debug
+  // fragColor = vec4(1); 
 }

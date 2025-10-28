@@ -41,6 +41,14 @@ const artworkRenderer = new TriangleStripArtworkRenderer(
   mapper
 )
 
+// Set initial resolution
+artworkRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+
+// Update artwork resolution on window resize
+window.addEventListener('resize', () => {
+  artworkRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+})
+
 // Set render callback
 let startTime = Date.now()
 mapper.setRenderCallback((_deltaTime) => {
@@ -51,10 +59,10 @@ mapper.setRenderCallback((_deltaTime) => {
   gl.clearColor(0.1, 0.1, 0.15, 1.0)
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-  // Render artwork in proj mode
+  // Render artwork in proj mode (render to screen, framebuffer = null)
   if (!mapper.getPhotoMode()) {
     const time = (Date.now() - startTime) / 1000 // seconds
-    artworkRenderer.render(time * 0.1) // Slower scroll speed
+    artworkRenderer.render(time * 0.1, null)
   }
 
   // WebMapper automatically renders areas/handles in edit mode
