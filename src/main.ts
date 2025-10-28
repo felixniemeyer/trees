@@ -1,6 +1,7 @@
 import './style.css'
 import { vec2, vec3 } from 'gl-matrix'
 import { WebMapper, TriangleStripArea, Point } from 'web-mapper'
+import { TriangleStripArtworkRenderer } from './artwork-renderer'
 
 // Get canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
@@ -14,10 +15,11 @@ const mapper = new WebMapper(canvas, {
 })
 
 // Enable edit mode so we can manipulate points
-mapper.setEditMode(true)
+let isEditMode = true
+mapper.setEditMode(isEditMode)
 
 // Load or create main triangle strip area
-const main = await mapper.loadOrCreateArea('main', () =>
+await mapper.loadOrCreateArea('main', () =>
   new TriangleStripArea(
     [
       new Point(vec2.fromValues(-0.5, -0.5), 0), // bottom-left
@@ -30,7 +32,17 @@ const main = await mapper.loadOrCreateArea('main', () =>
   )
 )
 
+// Get the main area and create artwork renderer
+const mainArea = mapper.areas[0] as TriangleStripArea
+const artworkRenderer = new TriangleStripArtworkRenderer(
+  mainArea,
+  mapper.gl,
+  mapper.projContext,
+  mapper
+)
+
 // Set render callback
+let startTime = Date.now()
 mapper.setRenderCallback((_deltaTime) => {
   const gl = mapper.gl
 
@@ -39,11 +51,34 @@ mapper.setRenderCallback((_deltaTime) => {
   gl.clearColor(0.1, 0.1, 0.15, 1.0)
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-  // WebMapper automatically renders areas in edit mode
+  // Render artwork in proj mode
+  if (!mapper.getPhotoMode()) {
+    const time = (Date.now() - startTime) / 1000 // seconds
+    artworkRenderer.render(time * 0.1) // Slower scroll speed
+  }
+
+  // WebMapper automatically renders areas/handles in edit mode
 })
 
-// Photo upload handler - triggered by 'P' key
+// Keyboard handlers
 document.addEventListener('keydown', async (e) => {
+  // Toggle photo/proj mode with 'M'
+  if (e.key === 'm' || e.key === 'M') {
+    const currentMode = mapper.getPhotoMode()
+    mapper.setPhotoMode(!currentMode)
+    console.log(`Switched to ${!currentMode ? 'photo' : 'proj'} mode`)
+  }
+
+  // Toggle edit mode with 'E' (only in proj mode)
+  if (e.key === 'e' || e.key === 'E') {
+    if (!mapper.getPhotoMode()) {
+      isEditMode = !isEditMode
+      mapper.setEditMode(isEditMode)
+      console.log(`Edit mode: ${isEditMode ? 'ON' : 'OFF'}`)
+    }
+  }
+
+  // Photo upload with 'P'
   if (e.key === 'p' || e.key === 'P') {
     // Create file input element
     const input = document.createElement('input')
@@ -89,3 +124,5 @@ console.log('- Double-click empty space: Add new point')
 console.log('- Double-click endpoint: Remove endpoint')
 console.log('- Shift + drag: Precision mode')
 console.log('- P key: Upload photo')
+console.log('- M key: Toggle photo/proj mode')
+console.log('- E key: Toggle edit mode (proj mode only)')
