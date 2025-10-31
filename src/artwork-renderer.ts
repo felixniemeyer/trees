@@ -1,4 +1,4 @@
-import { vec2 } from "gl-matrix"
+import { vec2, vec3 } from "gl-matrix"
 import { TriangleStripArea, ProjRenderContext, WebMapper } from "web-mapper"
 import ShaderProgram from "web-mapper/dist/utils/shader-program"
 
@@ -37,11 +37,17 @@ export class TriangleStripArtworkRenderer {
   // Resolution for viewport management
   private resolution = vec2.create()
 
-  // Distance calculation results
+  // Distance calculation results for texture generation (pixel space)
   private evenDistances: number[] = []
   private oddDistances: number[] = []
   private normalizedEvenUVs: number[] = []
   private normalizedOddUVs: number[] = []
+
+  // Distance calculation results for proj mode rendering (3D space)
+  private evenDistances3D: number[] = []
+  private oddDistances3D: number[] = []
+  private normalizedEvenUVs3D: number[] = []
+  private normalizedOddUVs3D: number[] = []
 
   // Constructor parameters stored as fields
   private area: TriangleStripArea
@@ -130,7 +136,7 @@ export class TriangleStripArtworkRenderer {
 
     if (pointCount < 2) return
 
-    // Convert photoPos to pixel space: (photoPos * 0.5 + 0.5) * dimensions
+    // Convert photoPos to pixel space for texture generation
     const pixelPositions: vec2[] = []
     for (let i = 0; i < pointCount; i++) {
       const photoPos = points[i]!.photoPos
@@ -141,37 +147,63 @@ export class TriangleStripArtworkRenderer {
       pixelPositions.push(pixelPos)
     }
 
-    // Calculate distances along even side (0, 2, 4, ...)
+    // Calculate pixel-based distances for texture generation
     this.evenDistances = new Array(pointCount).fill(0)
     for (let i = 0; i < pointCount - 2; i += 2) {
       const dist = vec2.distance(pixelPositions[i]!, pixelPositions[i + 2]!)
       this.evenDistances[i + 2] = this.evenDistances[i]! + dist
     }
 
-    // Calculate distances along odd side (1, 3, 5, ...)
     this.oddDistances = new Array(pointCount).fill(0)
     for (let i = 1; i < pointCount - 2; i += 2) {
       const dist = vec2.distance(pixelPositions[i]!, pixelPositions[i + 2]!)
       this.oddDistances[i + 2] = this.oddDistances[i]! + dist
     }
 
-    // Get max distance for each side independently
+    // Normalize pixel-based distances for texture generation
     const lastEvenIndex = pointCount % 2 === 0 ? pointCount - 2 : pointCount - 1
     const lastOddIndex = pointCount % 2 === 0 ? pointCount - 1 : pointCount - 2
     const maxEvenDistance = this.evenDistances[lastEvenIndex]!
     const maxOddDistance = this.oddDistances[lastOddIndex]!
 
-    // Normalize each side independently to [0, 1]
     this.normalizedEvenUVs = this.evenDistances.map(d => d / maxEvenDistance)
     this.normalizedOddUVs = this.oddDistances.map(d => d / maxOddDistance)
 
-    // Calculate texture dimensions based on the longer side
+    // Calculate texture dimensions
     const maxDistance = Math.max(maxEvenDistance, maxOddDistance)
     const edgeDistance0 = vec2.distance(pixelPositions[0]!, pixelPositions[1]!)
     const edgeDistanceLast = vec2.distance(pixelPositions[pointCount - 2]!, pixelPositions[pointCount - 1]!)
 
     this.textureWidth = Math.ceil(Math.max(edgeDistance0, edgeDistanceLast))
     this.textureHeight = Math.ceil(maxDistance)
+
+    // Convert projPos + depth to 3D positions for proj mode rendering
+    const positions3D: vec3[] = []
+    for (let i = 0; i < pointCount; i++) {
+      const point = points[i]!
+      const pos3D = this.renderContext.get3DPosition(point.position, point.depth)
+      positions3D.push(pos3D)
+    }
+
+    // Calculate 3D-based distances for proj mode rendering
+    this.evenDistances3D = new Array(pointCount).fill(0)
+    for (let i = 0; i < pointCount - 2; i += 2) {
+      const dist = vec3.distance(positions3D[i]!, positions3D[i + 2]!)
+      this.evenDistances3D[i + 2] = this.evenDistances3D[i]! + dist
+    }
+
+    this.oddDistances3D = new Array(pointCount).fill(0)
+    for (let i = 1; i < pointCount - 2; i += 2) {
+      const dist = vec3.distance(positions3D[i]!, positions3D[i + 2]!)
+      this.oddDistances3D[i + 2] = this.oddDistances3D[i]! + dist
+    }
+
+    // Normalize 3D-based distances for proj mode rendering
+    const maxEvenDistance3D = this.evenDistances3D[lastEvenIndex]!
+    const maxOddDistance3D = this.oddDistances3D[lastOddIndex]!
+
+    this.normalizedEvenUVs3D = this.evenDistances3D.map(d => d / maxEvenDistance3D)
+    this.normalizedOddUVs3D = this.oddDistances3D.map(d => d / maxOddDistance3D)
   }
 
   private updateTexture() {
@@ -253,7 +285,7 @@ export class TriangleStripArtworkRenderer {
     // Build triangle strip: alternate between even (left) and odd (right) points
     for (let i = 0; i < pointCount; i++) {
       const isEven = i % 2 === 0
-      const x = isEven ? 1.0 : -1.0
+      const x = isEven ? -1.0 : 1.0
       const normalizedY = isEven ? this.normalizedEvenUVs[i]! : this.normalizedOddUVs[i]!
       const y = normalizedY * 2.0 - 1.0
 
@@ -305,27 +337,21 @@ export class TriangleStripArtworkRenderer {
 
     for (let i = 0; i < pointCount; i++) {
       const point = points[i]!
-      const projPos = point.position
 
-      // Add position (vec3)
-      positions.push(projPos[0], projPos[1], point.depth)
+      // Convert to true 3D position for proper depth-aware interpolation in proj mode
+      const pos3D = this.renderContext.get3DPosition(point.position, point.depth)
 
-      // Add UV (vec2)
+      // Add 3D position (vec3)
+      positions.push(pos3D[0], pos3D[1], pos3D[2])
+
+      // Add UV (vec2) - use 3D-based normalized distances for proper perspective
       if (i % 2 === 0) {
-        // Even vertex: left side (x=0)
-        uvs.push(0.0, this.normalizedEvenUVs[i]!)
+        // Even vertex: left side (u=0)
+        uvs.push(0.0, this.normalizedEvenUVs3D[i]!)
       } else {
-        // Odd vertex: right side (x=1)
-        uvs.push(1.0, this.normalizedOddUVs[i]!)
+        // Odd vertex: right side (u=1)
+        uvs.push(1.0, this.normalizedOddUVs3D[i]!)
       }
-    }
-
-    // Log vertex data
-    console.log('Flow texture vertex data:')
-    for (let i = 0; i < pointCount; i++) {
-      const posIdx = i * 3
-      const uvIdx = i * 2
-      console.log(`  Vertex ${i}: pos=(${positions[posIdx]}, ${positions[posIdx + 1]}, ${positions[posIdx + 2]}), uv=(${uvs[uvIdx]}, ${uvs[uvIdx + 1]})`)
     }
 
     // Update buffers
