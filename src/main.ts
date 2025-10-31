@@ -51,6 +51,7 @@ window.addEventListener('resize', () => {
 
 // Set render callback
 let startTime = Date.now()
+let debugMode = false
 mapper.setRenderCallback((_deltaTime) => {
   const gl = mapper.gl
 
@@ -61,8 +62,14 @@ mapper.setRenderCallback((_deltaTime) => {
 
   // Render artwork in proj mode (render to screen, framebuffer = null)
   if (!mapper.getPhotoMode()) {
-    const time = (Date.now() - startTime) / 1000 // seconds
-    artworkRenderer.render(time * 0.1, null)
+    if (debugMode) {
+      // Debug mode: show the generated texture directly
+      artworkRenderer.debugRenderTexture(null)
+    } else {
+      // Normal mode: render with flow shader
+      const time = (Date.now() - startTime) / 1000 // seconds
+      artworkRenderer.render(time * 0.1, null)
+    }
   }
 
   // WebMapper automatically renders areas/handles in edit mode
@@ -77,12 +84,14 @@ document.addEventListener('keydown', async (e) => {
     console.log(`Switched to ${!currentMode ? 'photo' : 'proj'} mode`)
   }
 
-  // Toggle edit mode with 'E' (only in proj mode)
+  // Toggle edit mode with 'E' (only in proj mode, photo mode always has edit mode)
   if (e.key === 'e' || e.key === 'E') {
     if (!mapper.getPhotoMode()) {
       isEditMode = !isEditMode
       mapper.setEditMode(isEditMode)
       console.log(`Edit mode: ${isEditMode ? 'ON' : 'OFF'}`)
+    } else {
+      console.log('Cannot disable edit mode in photo mode')
     }
   }
 
@@ -123,6 +132,14 @@ document.addEventListener('keydown', async (e) => {
     // Trigger file dialog
     input.click()
   }
+
+  // Toggle debug texture view with 'D'
+  if (e.key === 'd' || e.key === 'D') {
+    if (!mapper.getPhotoMode()) {
+      debugMode = !debugMode
+      console.log(`Debug texture view: ${debugMode ? 'ON' : 'OFF'}`)
+    }
+  }
 })
 
 console.log('Trees app initialized')
@@ -134,3 +151,4 @@ console.log('- Shift + drag: Precision mode')
 console.log('- P key: Upload photo')
 console.log('- M key: Toggle photo/proj mode')
 console.log('- E key: Toggle edit mode (proj mode only)')
+console.log('- D key: Toggle debug texture view (proj mode only)')

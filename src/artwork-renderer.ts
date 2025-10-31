@@ -155,16 +155,18 @@ export class TriangleStripArtworkRenderer {
       this.oddDistances[i + 2] = this.oddDistances[i]! + dist
     }
 
-    // Get max distance for normalization
+    // Get max distance for each side independently
     const lastEvenIndex = pointCount % 2 === 0 ? pointCount - 2 : pointCount - 1
     const lastOddIndex = pointCount % 2 === 0 ? pointCount - 1 : pointCount - 2
-    const maxDistance = Math.max(this.evenDistances[lastEvenIndex]!, this.oddDistances[lastOddIndex]!)
+    const maxEvenDistance = this.evenDistances[lastEvenIndex]!
+    const maxOddDistance = this.oddDistances[lastOddIndex]!
 
-    // Normalize distances to [0, 1]
-    this.normalizedEvenUVs = this.evenDistances.map(d => d / maxDistance)
-    this.normalizedOddUVs = this.oddDistances.map(d => d / maxDistance)
+    // Normalize each side independently to [0, 1]
+    this.normalizedEvenUVs = this.evenDistances.map(d => d / maxEvenDistance)
+    this.normalizedOddUVs = this.oddDistances.map(d => d / maxOddDistance)
 
-    // Calculate texture dimensions
+    // Calculate texture dimensions based on the longer side
+    const maxDistance = Math.max(maxEvenDistance, maxOddDistance)
     const edgeDistance0 = vec2.distance(pixelPositions[0]!, pixelPositions[1]!)
     const edgeDistanceLast = vec2.distance(pixelPositions[pointCount - 2]!, pixelPositions[pointCount - 1]!)
 
@@ -190,8 +192,8 @@ export class TriangleStripArtworkRenderer {
     )
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT)
 
     // Attach texture to framebuffer
     gl.framebufferTexture2D(
@@ -232,7 +234,7 @@ export class TriangleStripArtworkRenderer {
     }
 
     // Build vertex data: positions in NDC and photo pixel coordinates
-    // x = -1 for left column (even indices), x = 1 for right column (odd indices)
+    // x = 1 for left column (even indices), x = -1 for right column (odd indices) - flipped to match orientation
     // y = normalizedDistance * 2 - 1 (converting [0,1] to [-1,1])
     const positions: number[] = []
     const photoPixelCoords: number[] = []
@@ -251,7 +253,7 @@ export class TriangleStripArtworkRenderer {
     // Build triangle strip: alternate between even (left) and odd (right) points
     for (let i = 0; i < pointCount; i++) {
       const isEven = i % 2 === 0
-      const x = isEven ? -1.0 : 1.0
+      const x = isEven ? 1.0 : -1.0
       const normalizedY = isEven ? this.normalizedEvenUVs[i]! : this.normalizedOddUVs[i]!
       const y = normalizedY * 2.0 - 1.0
 
@@ -318,6 +320,14 @@ export class TriangleStripArtworkRenderer {
       }
     }
 
+    // Log vertex data
+    console.log('Flow texture vertex data:')
+    for (let i = 0; i < pointCount; i++) {
+      const posIdx = i * 3
+      const uvIdx = i * 2
+      console.log(`  Vertex ${i}: pos=(${positions[posIdx]}, ${positions[posIdx + 1]}, ${positions[posIdx + 2]}), uv=(${uvs[uvIdx]}, ${uvs[uvIdx + 1]})`)
+    }
+
     // Update buffers
     const gl = this.gl
 
@@ -335,8 +345,6 @@ export class TriangleStripArtworkRenderer {
       this.needsRegeneration = false
     }
 
-    console.log('Rendering TriangleStripArtworkRenderer with vertex count:', this.vertexCount)
-
     if (this.vertexCount < 2 || !this.photoTexture) return
 
     const gl = this.gl
@@ -349,7 +357,6 @@ export class TriangleStripArtworkRenderer {
 
     // Set uniforms
     const projMatrix = this.renderContext.getProjectionMatrix()
-    console.log('Projection matrix:', projMatrix)
     gl.uniformMatrix4fv(
       this.program.uniLocs.projectionMatrix,
       false,
@@ -372,6 +379,53 @@ export class TriangleStripArtworkRenderer {
     gl.bindVertexArray(null)
 
     gl.disable(gl.BLEND)
+  }
+
+  debugRenderTexture(targetFramebuffer: WebGLFramebuffer | null) {
+    const gl = this.gl
+
+    // Bind target framebuffer and set viewport
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFramebuffer)
+    gl.viewport(0, 0, this.resolution[0], this.resolution[1])
+
+    // Use texture mapping program to render the generated texture fullscreen
+    this.textureMappingProgram.use()
+
+    // Create a fullscreen quad in NDC coordinates
+    const positions = new Float32Array([
+      -1, -1,  // bottom-left
+       1, -1,  // bottom-right
+      -1,  1,  // top-left
+       1,  1   // top-right
+    ])
+
+    // UV coordinates for the generated texture
+    const uvs = new Float32Array([
+      0, 0,  // bottom-left
+      1, 0,  // bottom-right
+      0, 1,  // top-left
+      1, 1   // top-right
+    ])
+
+    // Update buffers with fullscreen quad
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.textureMappingPositionBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.textureMappingPhotoCoordBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW)
+
+    // Set uniforms - photoDimensions needs to be vec2(1,1) for normalized UVs
+    gl.uniform2f(this.textureMappingProgram.uniLocs.photoDimensions, 1.0, 1.0)
+
+    // Bind generated texture
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.generatedTexture)
+    gl.uniform1i(this.textureMappingProgram.uniLocs.photoTexture, 0)
+
+    // Draw fullscreen quad
+    gl.bindVertexArray(this.textureMappingVAO)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    gl.bindVertexArray(null)
   }
 
   destroy() {

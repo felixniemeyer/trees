@@ -12,6 +12,6 @@ uniform sampler2D photoTexture;
 out vec4 fragColor;
 
 void main() {
-  // Sample the photo texture at the UV coordinates
+  // Sample the photo texture with mirrored repeat
   fragColor = texture(photoTexture, v_photoUV);
 }

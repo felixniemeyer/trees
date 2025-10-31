@@ -13,12 +13,12 @@ uniform float time;  // Time for scrolling animation
 out vec4 fragColor;
 
 void main() {
-  // Scroll UV coordinates along Y axis using fract for looping
-  vec2 scrollUv = vec2(v_uv.x, fract(v_uv.y + time));
+  // Scroll UV coordinates along Y axis using mod(2.0) for mirrored repeat
+  vec2 scrollUv = vec2(v_uv.x, mod(v_uv.y + time, 2.0));
 
-  // Sample the photo texture
+  // Sample the photo texture with mirrored repeat
   fragColor = texture(photoTexture, scrollUv);
 
   //debug
-  // fragColor = vec4(1); 
+  // fragColor = vec4(1);
 }
