@@ -183,14 +183,14 @@ document.addEventListener('keydown', async (e) => {
   }
 
   // Arrow Down: Remove last tree
-  if (e.key === 'ArrowDown' && trees.length > 1) {
+  if (e.key === 'ArrowDown' && trees.length > 0) {
     const lastTree = trees.pop()!
     const lastRenderer = artworkRenderers.pop()!
 
     lastRenderer.destroy()
     mapper.removeArea(lastTree)
 
-    await mapper.storage.remove(`tree-${trees.length}`)
+    await mapper.storage.delete(`tree-${trees.length}`)
     await mapper.storage.set('tree-count', trees.length)
     console.log(`Removed tree. Total: ${trees.length}`)
   }
