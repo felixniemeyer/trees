@@ -18,35 +18,56 @@ const mapper = new WebMapper(canvas, {
 let isEditMode = true
 mapper.setEditMode(isEditMode)
 
-// Load or create main triangle strip area
-await mapper.loadOrCreateArea('main', () =>
-  new TriangleStripArea(
-    [
-      new Point(vec2.fromValues(-0.5, -0.5), 0), // bottom-left
-      new Point(vec2.fromValues(0.5, -0.5), 0),  // bottom-right
-      new Point(vec2.fromValues(-0.5, 0.5), 0),  // top-left
-      new Point(vec2.fromValues(0.5, 0.5), 0),   // top-right
-    ],
-    vec3.fromValues(0.3, 0.8, 0.6), // Green color for trees
-    0 // No rotation
-  )
+// Helper function to generate colors for trees
+function generateColor(index: number): vec3 {
+  const colors = [
+    vec3.fromValues(0.3, 0.8, 0.6), // green
+    vec3.fromValues(1.0, 0.3, 0.3), // red
+    vec3.fromValues(0.3, 0.5, 1.0), // blue
+    vec3.fromValues(1.0, 0.8, 0.2), // yellow
+    vec3.fromValues(1.0, 0.4, 0.8), // magenta
+    vec3.fromValues(0.2, 0.9, 0.9), // cyan
+  ]
+  return colors[index % colors.length]!
+}
+
+// Helper function to create default tree
+function createDefaultTree(index: number): TriangleStripArea {
+  const points = [
+    new Point(vec2.fromValues(-0.2, -0.2), 0),
+    new Point(vec2.fromValues(0.2, -0.2), 0),
+    new Point(vec2.fromValues(-0.2, 0.2), 0),
+    new Point(vec2.fromValues(0.2, 0.2), 0),
+  ]
+  const color = generateColor(index)
+  const angle = 0
+  return new TriangleStripArea(points, color, angle, mapper.storage, `tree-${index}`)
+}
+
+// Load trees from storage
+const treeCount = await mapper.storage.get('tree-count') || 1
+const trees: TriangleStripArea[] = []
+
+for (let i = 0; i < treeCount; i++) {
+  const tree = await mapper.loadOrCreateArea(`tree-${i}`, () => createDefaultTree(i))
+  trees.push(tree as TriangleStripArea)
+}
+
+// Create artwork renderers for all trees
+const artworkRenderers: TriangleStripArtworkRenderer[] = trees.map(tree =>
+  new TriangleStripArtworkRenderer(tree, mapper.gl, mapper.projContext, mapper)
 )
 
-// Get the main area and create artwork renderer
-const mainArea = mapper.areas[0] as TriangleStripArea
-const artworkRenderer = new TriangleStripArtworkRenderer(
-  mainArea,
-  mapper.gl,
-  mapper.projContext,
-  mapper
-)
-
-// Set initial resolution
-artworkRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+// Set initial resolution for all renderers
+artworkRenderers.forEach(renderer => {
+  renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+})
 
 // Update artwork resolution on window resize
 window.addEventListener('resize', () => {
-  artworkRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+  artworkRenderers.forEach(renderer => {
+    renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+  })
 })
 
 // Set render callback
@@ -64,11 +85,11 @@ mapper.setRenderCallback((_deltaTime) => {
   if (!mapper.getPhotoMode()) {
     if (debugMode) {
       // Debug mode: show the generated texture directly
-      artworkRenderer.debugRenderTexture(null)
+      artworkRenderers.forEach(renderer => renderer.debugRenderTexture(null))
     } else {
       // Normal mode: render with flow shader
       const time = (Date.now() - startTime) / 1000 // seconds
-      artworkRenderer.render(time * 0.1, null)
+      artworkRenderers.forEach(renderer => renderer.render(time * 0.1, null))
     }
   }
 
@@ -140,15 +161,51 @@ document.addEventListener('keydown', async (e) => {
       console.log(`Debug texture view: ${debugMode ? 'ON' : 'OFF'}`)
     }
   }
+
+  // Arrow Up: Add new tree
+  if (e.key === 'ArrowUp') {
+    const newIndex = trees.length
+    const newTree = createDefaultTree(newIndex)
+    trees.push(newTree)
+    mapper.addArea(newTree)
+
+    const newRenderer = new TriangleStripArtworkRenderer(
+      newTree,
+      mapper.gl,
+      mapper.projContext,
+      mapper
+    )
+    newRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+    artworkRenderers.push(newRenderer)
+
+    await mapper.storage.set('tree-count', trees.length)
+    console.log(`Added tree ${newIndex}. Total: ${trees.length}`)
+  }
+
+  // Arrow Down: Remove last tree
+  if (e.key === 'ArrowDown' && trees.length > 1) {
+    const lastTree = trees.pop()!
+    const lastRenderer = artworkRenderers.pop()!
+
+    lastRenderer.destroy()
+    mapper.removeArea(lastTree)
+
+    await mapper.storage.remove(`tree-${trees.length}`)
+    await mapper.storage.set('tree-count', trees.length)
+    console.log(`Removed tree. Total: ${trees.length}`)
+  }
 })
 
 console.log('Trees app initialized')
+console.log(`Loaded ${trees.length} tree(s)`)
 console.log('Controls:')
 console.log('- Left click + drag: Move points')
-console.log('- Double-click empty space: Add new point')
-console.log('- Double-click endpoint: Remove endpoint')
+console.log('- Shift + hover edge: Preview insertion point')
+console.log('- Shift + click edge: Insert new point(s)')
 console.log('- Shift + drag: Precision mode')
 console.log('- P key: Upload photo')
 console.log('- M key: Toggle photo/proj mode')
 console.log('- E key: Toggle edit mode (proj mode only)')
 console.log('- D key: Toggle debug texture view (proj mode only)')
+console.log('- Arrow Up: Add new tree')
+console.log('- Arrow Down: Remove last tree')

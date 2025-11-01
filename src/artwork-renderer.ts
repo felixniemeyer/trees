@@ -26,6 +26,7 @@ export class TriangleStripArtworkRenderer {
   private vertexCount = 0
   private unsubscribeArea?: () => void
   private unsubscribePhoto?: () => void
+  private unsubscribeRenderContext?: () => void
 
   // Photo data
   private photoTexture: WebGLTexture | null = null
@@ -116,6 +117,11 @@ export class TriangleStripArtworkRenderer {
     this.unsubscribePhoto = this.webMapper.subscribeToPhotoChanges((texture, dimensions) => {
       this.photoTexture = texture
       this.photoDimensions = dimensions
+      this.needsRegeneration = true
+    })
+
+    // Subscribe to projection context changes (e.g., resize)
+    this.unsubscribeRenderContext = this.renderContext.subscribe(() => {
       this.needsRegeneration = true
     })
   }
@@ -460,6 +466,9 @@ export class TriangleStripArtworkRenderer {
     }
     if (this.unsubscribePhoto) {
       this.unsubscribePhoto()
+    }
+    if (this.unsubscribeRenderContext) {
+      this.unsubscribeRenderContext()
     }
     this.gl.deleteVertexArray(this.vao)
     this.gl.deleteBuffer(this.positionBuffer)

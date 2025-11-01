@@ -1,0 +1,5 @@
+
+- when hovering side of triangle strip with shift pressed, make a cut
+  - render a line where the cut will be made and two handles where the newly added handles will be
+  - for the cut get the p that linearly interpolates closest to 
+
