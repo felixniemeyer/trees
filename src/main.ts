@@ -41,7 +41,8 @@ function createDefaultTree(index: number): TriangleStripArea {
   ]
   const color = generateColor(index)
   const angle = 0
-  return new TriangleStripArea(points, color, angle, mapper.storage, `tree-${index}`)
+  // Don't pass storage to constructor - will be set up later via setStorage()
+  return new TriangleStripArea(points, color, angle)
 }
 
 // Load trees from storage
@@ -162,15 +163,23 @@ document.addEventListener('keydown', async (e) => {
     }
   }
 
+  // Reset all areas with 'R'
+  if (e.key === 'R') {
+    if (confirm('Reset all trees and clear storage? This cannot be undone.')) {
+      await mapper.resetAll()
+    }
+  }
+
   // Arrow Up: Add new tree
   if (e.key === 'ArrowUp') {
     const newIndex = trees.length
-    const newTree = createDefaultTree(newIndex)
-    trees.push(newTree)
-    mapper.addArea(newTree)
+
+    // Use loadOrCreateArea to properly handle storage setup
+    const newTree = await mapper.loadOrCreateArea(`tree-${newIndex}`, () => createDefaultTree(newIndex))
+    trees.push(newTree as TriangleStripArea)
 
     const newRenderer = new TriangleStripArtworkRenderer(
-      newTree,
+      newTree as TriangleStripArea,
       mapper.gl,
       mapper.projContext,
       mapper
@@ -187,10 +196,14 @@ document.addEventListener('keydown', async (e) => {
     const lastTree = trees.pop()!
     const lastRenderer = artworkRenderers.pop()!
 
+    // Delete the area's storage before removing
+    if (lastTree.storageKey) {
+      await mapper.storage.delete(lastTree.storageKey)
+    }
+
     lastRenderer.destroy()
     mapper.removeArea(lastTree)
 
-    await mapper.storage.delete(`tree-${trees.length}`)
     await mapper.storage.set('tree-count', trees.length)
     console.log(`Removed tree. Total: ${trees.length}`)
   }
@@ -207,5 +220,6 @@ console.log('- P key: Upload photo')
 console.log('- M key: Toggle photo/proj mode')
 console.log('- E key: Toggle edit mode (proj mode only)')
 console.log('- D key: Toggle debug texture view (proj mode only)')
+console.log('- R key: Reset all trees and clear storage')
 console.log('- Arrow Up: Add new tree')
 console.log('- Arrow Down: Remove last tree')
