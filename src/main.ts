@@ -1,7 +1,10 @@
 import './style.css'
+import './project-selection.css'
 import { vec2, vec3 } from 'gl-matrix'
 import { WebMapper, TriangleStripArea, Point } from 'web-mapper'
 import { TriangleStripArtworkRenderer } from './artwork-renderer'
+import { ProjectSelection } from './project-selection'
+import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 
 // Get canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
@@ -9,14 +12,19 @@ if (!canvas) {
   throw new Error('Canvas element not found')
 }
 
-// Create WebMapper
-const mapper = new WebMapper(canvas, {
-  artworkId: 'trees'
-})
-
-// Enable edit mode so we can manipulate points
+// Global state
+let mapper: WebMapper | null = null
 let isEditMode = true
-mapper.setEditMode(isEditMode)
+let debugMode = false
+let startTime = Date.now()
+let trees: TriangleStripArea[] = []
+let artworkRenderers: TriangleStripArtworkRenderer[] = []
+let treeSpeeds: number[] = [] // Random speed multiplier for each tree
+let projectSelection: ProjectSelection | null = null
+
+// Create storage instance (shared for project management)
+const storage = new IndexedDBStorage('trees', 'v1.0.0')
+await storage.init()
 
 // Helper function to generate colors for trees
 function generateColor(index: number): vec3 {
@@ -45,24 +53,134 @@ function createDefaultTree(index: number): TriangleStripArea {
   return new TriangleStripArea(points, color, angle)
 }
 
-// Load trees from storage
-const treeCount = await mapper.storage.get('tree-count') || 1
-const trees: TriangleStripArea[] = []
+// Initialize project function
+async function initializeProject(projectId: string) {
+  // Set current project in storage
+  storage.setCurrentProject(projectId)
 
-for (let i = 0; i < treeCount; i++) {
-  const tree = await mapper.loadOrCreateArea(`tree-${i}`, () => createDefaultTree(i))
-  trees.push(tree as TriangleStripArea)
+  // Update project's last modified timestamp
+  await storage.touchProject(projectId)
+
+  // Create WebMapper with the storage
+  mapper = new WebMapper(canvas, {
+    artworkId: 'trees',
+    storage: {
+      get: (key: string) => storage.loadArea(key),
+      set: (key: string, value: any) => storage.saveArea(key, value),
+      delete: async (key: string) => storage.saveArea(key, null),
+      deleteAndRecreate: () => storage.deleteAndRecreate()
+    }
+  })
+
+  // Enable edit mode so we can manipulate points
+  isEditMode = true
+  mapper.setEditMode(isEditMode)
+
+  // Load trees from storage
+  const treeCount = await storage.loadArea('tree-count') || 1
+  trees = []
+  treeSpeeds = []
+
+  // Load or generate speeds for each tree
+  const savedSpeeds = await storage.loadArea('tree-speeds') as number[] | null
+
+  for (let i = 0; i < treeCount; i++) {
+    const tree = await mapper.loadOrCreateArea(`tree-${i}`, () => createDefaultTree(i))
+    trees.push(tree as TriangleStripArea)
+
+    // Use saved speed or generate new random speed (-0.2 to 0.2)
+    const speed = savedSpeeds?.[i] ?? (Math.random() * 0.4 - 0.2)
+    treeSpeeds.push(speed)
+  }
+
+  // Save speeds if they were newly generated
+  if (!savedSpeeds) {
+    await storage.saveArea('tree-speeds', treeSpeeds)
+  }
+
+  // Create artwork renderers for all trees
+  artworkRenderers = trees.map(tree =>
+    new TriangleStripArtworkRenderer(tree, mapper.gl, mapper.projContext, mapper)
+  )
+
+  // Set initial resolution for all renderers
+  artworkRenderers.forEach(renderer => {
+    renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
+  })
+
+  // Set render callback
+  startTime = Date.now()
+  mapper.setRenderCallback((_deltaTime) => {
+    if (!mapper) return
+    const gl = mapper.gl
+
+    // Clear canvas with dark background
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.clearColor(0.1, 0.1, 0.15, 1.0)
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+    // Render artwork in proj mode (render to screen, framebuffer = null)
+    if (!mapper.getPhotoMode()) {
+      if (debugMode) {
+        // Debug mode: show the generated texture directly
+        artworkRenderers.forEach(renderer => renderer.debugRenderTexture(null))
+      } else {
+        // Normal mode: render with flow shader
+        const time = (Date.now() - startTime) / 1000 // seconds
+        artworkRenderers.forEach((renderer, i) => renderer.render(time * treeSpeeds[i]!, null))
+      }
+    }
+
+    // WebMapper automatically renders areas/handles in edit mode
+  })
+
+  console.log('Trees app initialized')
+  console.log(`Loaded ${trees.length} tree(s) for project ${projectId}`)
 }
 
-// Create artwork renderers for all trees
-const artworkRenderers: TriangleStripArtworkRenderer[] = trees.map(tree =>
-  new TriangleStripArtworkRenderer(tree, mapper.gl, mapper.projContext, mapper)
-)
+// Show project selection UI
+function showProjectSelection() {
+  projectSelection = new ProjectSelection(storage, {
+    onProjectSelected: async (projectId: string) => {
+      projectSelection?.hide()
+      await initializeProject(projectId)
+    },
+    onProjectCreated: async (name: string) => {
+      const project = await storage.createProject(name)
+      projectSelection?.hide()
+      await initializeProject(project.id)
+    }
+  })
+  projectSelection.show()
+}
 
-// Set initial resolution for all renderers
-artworkRenderers.forEach(renderer => {
-  renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
-})
+// Exit current project and show selection
+async function exitProject() {
+  if (!mapper) return
+
+  // Save thumbnail before exiting
+  const projectId = storage.getCurrentProject()
+  if (projectId) {
+    try {
+      const thumbnail = mapper.captureProjectThumbnail()
+      await storage.updateProjectThumbnail(projectId, thumbnail)
+    } catch (error) {
+      console.error('Failed to save thumbnail:', error)
+    }
+  }
+
+  // Clear current state
+  artworkRenderers.forEach(r => r.destroy())
+  artworkRenderers = []
+  trees = []
+  treeSpeeds = []
+
+  mapper.destroy()
+  mapper = null
+
+  // Show project selection
+  showProjectSelection()
+}
 
 // Update artwork resolution on window resize
 window.addEventListener('resize', () => {
@@ -71,34 +189,31 @@ window.addEventListener('resize', () => {
   })
 })
 
-// Set render callback
-let startTime = Date.now()
-let debugMode = false
-mapper.setRenderCallback((_deltaTime) => {
-  const gl = mapper.gl
-
-  // Clear canvas with dark background
-  gl.viewport(0, 0, canvas.width, canvas.height)
-  gl.clearColor(0.1, 0.1, 0.15, 1.0)
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-  // Render artwork in proj mode (render to screen, framebuffer = null)
-  if (!mapper.getPhotoMode()) {
-    if (debugMode) {
-      // Debug mode: show the generated texture directly
-      artworkRenderers.forEach(renderer => renderer.debugRenderTexture(null))
-    } else {
-      // Normal mode: render with flow shader
-      const time = (Date.now() - startTime) / 1000 // seconds
-      artworkRenderers.forEach(renderer => renderer.render(time * 0.1, null))
-    }
+// Check for last used project or show selection
+const lastProjectId = storage.getLastUsedProject()
+if (lastProjectId) {
+  const project = await storage.getProject(lastProjectId)
+  if (project) {
+    await initializeProject(lastProjectId)
+  } else {
+    // Project no longer exists
+    showProjectSelection()
   }
-
-  // WebMapper automatically renders areas/handles in edit mode
-})
+} else {
+  showProjectSelection()
+}
 
 // Keyboard handlers
 document.addEventListener('keydown', async (e) => {
+  // Exit project with 'Q'
+  if (e.key === 'q' || e.key === 'Q') {
+    await exitProject()
+    return
+  }
+
+  // Skip other handlers if no project is loaded
+  if (!mapper) return
+
   // Toggle photo/proj mode with 'M'
   if (e.key === 'm' || e.key === 'M') {
     const currentMode = mapper.getPhotoMode()
@@ -178,6 +293,10 @@ document.addEventListener('keydown', async (e) => {
     const newTree = await mapper.loadOrCreateArea(`tree-${newIndex}`, () => createDefaultTree(newIndex))
     trees.push(newTree as TriangleStripArea)
 
+    // Generate random speed for new tree (-0.2 to 0.2)
+    const newSpeed = Math.random() * 0.4 - 0.2
+    treeSpeeds.push(newSpeed)
+
     const newRenderer = new TriangleStripArtworkRenderer(
       newTree as TriangleStripArea,
       mapper.gl,
@@ -187,7 +306,8 @@ document.addEventListener('keydown', async (e) => {
     newRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
     artworkRenderers.push(newRenderer)
 
-    await mapper.storage.set('tree-count', trees.length)
+    await storage.saveArea('tree-count', trees.length)
+    await storage.saveArea('tree-speeds', treeSpeeds)
     console.log(`Added tree ${newIndex}. Total: ${trees.length}`)
   }
 
@@ -195,23 +315,25 @@ document.addEventListener('keydown', async (e) => {
   if (e.key === 'ArrowDown' && trees.length > 0) {
     const lastTree = trees.pop()!
     const lastRenderer = artworkRenderers.pop()!
+    treeSpeeds.pop() // Remove speed for removed tree
 
     // Delete the area's storage before removing
     if (lastTree.storageKey) {
-      await mapper.storage.delete(lastTree.storageKey)
+      await storage.saveArea(lastTree.storageKey, null)
     }
 
     lastRenderer.destroy()
     mapper.removeArea(lastTree)
 
-    await mapper.storage.set('tree-count', trees.length)
+    await storage.saveArea('tree-count', trees.length)
+    await storage.saveArea('tree-speeds', treeSpeeds)
     console.log(`Removed tree. Total: ${trees.length}`)
   }
 })
 
-console.log('Trees app initialized')
-console.log(`Loaded ${trees.length} tree(s)`)
-console.log('Controls:')
+// Log controls on startup
+console.log('Trees Mapper - Controls:')
+console.log('- Q key: Exit project / Switch projects')
 console.log('- Left click + drag: Move points')
 console.log('- Shift + hover edge: Preview insertion point')
 console.log('- Shift + click edge: Insert new point(s)')
