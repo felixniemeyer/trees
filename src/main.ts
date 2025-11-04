@@ -21,6 +21,13 @@ let trees: TriangleStripArea[] = []
 let projectSelection: ProjectSelection | null = null
 let forest: Forest | null = null
 
+// Audio reactivity
+let audioContext: AudioContext | null = null
+let analyser: AnalyserNode | null = null
+let audioDataArray: Float32Array | null = null
+let audioEnabled = false
+let audioEnergies: number[] = []
+
 // Create storage instance (shared for project management)
 const storage = new IndexedDBStorage('trees', 'v1.0.0')
 await storage.init()
@@ -50,6 +57,30 @@ function createDefaultTree(index: number): TriangleStripArea {
   const angle = 0
   // Don't pass storage to constructor - will be set up later via setStorage()
   return new TriangleStripArea(points, color, angle)
+}
+
+// Initialize audio system
+async function initAudio() {
+  try {
+    audioContext = new AudioContext()
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const source = audioContext.createMediaStreamSource(stream)
+
+    analyser = audioContext.createAnalyser()
+    analyser.fftSize = 2048
+    analyser.smoothingTimeConstant = 0.3
+
+    source.connect(analyser)
+
+    audioDataArray = new Float32Array(analyser.frequencyBinCount)
+    audioEnergies = new Array(trees.length).fill(0)
+
+    console.log('Audio initialized - microphone active')
+    return true
+  } catch (error) {
+    console.error('Failed to initialize audio:', error)
+    return false
+  }
 }
 
 // Initialize project function
@@ -100,10 +131,22 @@ async function initializeProject(projectId: string) {
 
     // Render artwork in proj mode (render to screen, framebuffer = null)
     if (!mapper.getPhotoMode() && !debugMode) {
+      // Audio analysis
+      if (audioEnabled && analyser && audioDataArray) {
+        analyser.getFloatFrequencyData(audioDataArray)
+
+        // Update audio energies array for each tree based on its frequency index
+        if (audioEnergies.length !== trees.length) {
+          audioEnergies = new Array(trees.length).fill(0)
+        }
+
+        // Forest will handle the frequency-to-bin mapping
+      }
+
       // Normal mode: render with Forest (handles all trees with shadows)
       const time = (Date.now() - startTime) / 1000 // seconds
       forest.update()
-      forest.render(time, null)
+      forest.render(time, null, audioEnabled, audioDataArray || new Float32Array(0))
     }
 
     // WebMapper automatically renders areas/handles in edit mode
@@ -261,6 +304,29 @@ document.addEventListener('keydown', async (e) => {
     if (forest) {
       forest.randomizeDepths()
       console.log('Randomized tree depths')
+    }
+  }
+
+  // Toggle audio reactivity with 'A'
+  if (e.key === 'a' || e.key === 'A') {
+    if (!audioEnabled && !audioContext) {
+      // Initialize audio for first time
+      const success = await initAudio()
+      if (success) {
+        audioEnabled = true
+        console.log('Audio reactivity: ON')
+      }
+    } else {
+      audioEnabled = !audioEnabled
+      console.log(`Audio reactivity: ${audioEnabled ? 'ON' : 'OFF'}`)
+    }
+  }
+
+  // Shuffle frequency assignments with 'T'
+  if (e.key === 't' || e.key === 'T') {
+    if (forest) {
+      forest.shuffleFrequencies()
+      console.log('Shuffled frequency assignments')
     }
   }
 

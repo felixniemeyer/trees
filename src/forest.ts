@@ -36,6 +36,11 @@ export class Forest {
   private shadowAlpha: number = 0.02
   private shadowAmount = 1.5
 
+  // Audio reactivity
+  private audioOffsets: number[] = []
+  private smoothedEnergies: number[] = []
+  private lastFrameTime: number = performance.now()
+
   constructor(
     gl: WebGL2RenderingContext,
     areas: TriangleStripArea[],
@@ -57,11 +62,12 @@ export class Forest {
       renderer.setResolution(vec2.fromValues(resolution[0], resolution[1]))
     })
 
-    // Initialize speeds and depths from metadata or generate new ones
+    // Initialize speeds, depths, and frequency indices from metadata or generate new ones
     this.treeSpeeds = []
     this.treeDepths = []
 
-    for (const area of areas) {
+    for (let i = 0; i < areas.length; i++) {
+      const area = areas[i]!
       if (!area.metadata) {
         area.metadata = {}
       }
@@ -79,7 +85,17 @@ export class Forest {
         area.save()
       }
       this.treeDepths.push(area.metadata.depth)
+
+      // Read or generate frequency index (sequential by default)
+      if (area.metadata.frequencyIndex === undefined) {
+        area.metadata.frequencyIndex = i
+        area.save()
+      }
     }
+
+    // Initialize audio arrays
+    this.audioOffsets = new Array(areas.length).fill(0)
+    this.smoothedEnergies = new Array(areas.length).fill(0)
 
     // Create render targets
     this.treesTexture = this.createTexture()
@@ -230,8 +246,18 @@ export class Forest {
     // No explicit update needed here
   }
 
-  render(time: number, targetFramebuffer: WebGLFramebuffer | null) {
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null, audioEnabled: boolean, audioData: Float32Array) {
     const gl = this.gl
+
+    // Calculate delta time
+    const now = performance.now()
+    const deltaTime = Math.min((now - this.lastFrameTime) / 1000, 0.1) // Cap at 100ms
+    this.lastFrameTime = now
+
+    // Process audio if enabled
+    if (audioEnabled && audioData.length > 0) {
+      this.processAudio(audioData, deltaTime)
+    }
 
     // Step 1: Render all trees to trees texture with depth in alpha
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.treesFramebuffer)
@@ -245,7 +271,11 @@ export class Forest {
     gl.depthFunc(gl.LESS)
 
     for (let i = 0; i < this.renderers.length; i++) {
-      this.renderers[i]!.render(time * this.treeSpeeds[i]!, this.treesFramebuffer, this.treeDepths[i]!)
+      // Base time animation
+      const baseTime = time * this.treeSpeeds[i]! * 0.1
+      // Add audio offset if audio is enabled
+      const totalTime = baseTime + (audioEnabled ? this.audioOffsets[i]! : 0)
+      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!)
     }
 
     gl.disable(gl.DEPTH_TEST)
@@ -305,6 +335,68 @@ export class Forest {
     gl.bindVertexArray(this.quadVAO)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     gl.bindVertexArray(null)
+  }
+
+  private processAudio(audioData: Float32Array, deltaTime: number) {
+    const numTrees = this.areas.length
+    const minFreq = 30
+    const maxFreq = 5000
+    const sampleRate = 44100 // Typical sample rate
+    const fftSize = 2048
+
+    // Spectrum divided among trees
+    const freqRangePerTree = (maxFreq - minFreq) / numTrees
+
+    for (let i = 0; i < numTrees; i++) {
+      const freqIndex = this.areas[i]!.metadata!.frequencyIndex as number
+
+      // Calculate frequency range for this tree
+      const freqStart = minFreq + freqIndex * freqRangePerTree
+      const freqEnd = freqStart + freqRangePerTree
+
+      // Convert frequencies to FFT bin indices
+      const binStart = Math.floor((freqStart / sampleRate) * fftSize)
+      const binEnd = Math.ceil((freqEnd / sampleRate) * fftSize)
+
+      // Average energy across bins (dB values, typically -100 to 0)
+      let sumEnergy = 0
+      let count = 0
+      for (let bin = binStart; bin < binEnd && bin < audioData.length; bin++) {
+        sumEnergy += audioData[bin]!
+        count++
+      }
+
+      const avgEnergyDb = count > 0 ? sumEnergy / count : -100
+      // Normalize from dB (-100 to 0) to 0-1 range
+      const normalizedEnergy = Math.max(0, Math.min(1, (avgEnergyDb + 100) / 100))
+
+      // Smooth energy
+      const smoothFactor = Math.min(deltaTime * 3, 1)
+      this.smoothedEnergies[i] = this.smoothedEnergies[i]! + (normalizedEnergy - this.smoothedEnergies[i]!) * smoothFactor
+
+      // Accumulate audio offset (sensitivity can be adjusted)
+      const sensitivity = 2.0
+      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * sensitivity * deltaTime
+    }
+  }
+
+  shuffleFrequencies() {
+    // Create array of indices
+    const indices = Array.from({ length: this.areas.length }, (_, i) => i)
+
+    // Fisher-Yates shuffle
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j]!, indices[i]!]
+    }
+
+    // Assign shuffled indices to trees
+    for (let i = 0; i < this.areas.length; i++) {
+      this.areas[i]!.metadata!.frequencyIndex = indices[i]
+      this.areas[i]!.save()
+    }
+
+    console.log('Shuffled frequency assignments')
   }
 
   randomizeDepths() {
