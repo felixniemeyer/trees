@@ -370,7 +370,7 @@ export class TriangleStripArtworkRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.DYNAMIC_DRAW)
   }
 
-  render(time: number, targetFramebuffer: WebGLFramebuffer | null) {
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5) {
     // Check if we need to regenerate geometry
     if (this.needsRegeneration && this.photoTexture && this.photoDimensions) {
       this.updateGeometry(this.photoDimensions)
@@ -395,22 +395,17 @@ export class TriangleStripArtworkRenderer {
       projMatrix
     )
     gl.uniform1f(this.program.uniLocs.time, time)
+    gl.uniform1f(this.program.uniLocs.u_depth, depth)
 
     // Bind generated texture (for now it's empty, but structure is ready)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.generatedTexture)
     gl.uniform1i(this.program.uniLocs.photoTexture, 0)
 
-    // Enable blending
-    gl.enable(gl.BLEND)
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-
     // Draw triangle strip
     gl.bindVertexArray(this.vao)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, this.vertexCount)
     gl.bindVertexArray(null)
-
-    gl.disable(gl.BLEND)
   }
 
   debugRenderTexture(targetFramebuffer: WebGLFramebuffer | null) {

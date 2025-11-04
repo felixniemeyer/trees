@@ -5,6 +5,7 @@ import { WebMapper, TriangleStripArea, Point } from 'web-mapper'
 import { TriangleStripArtworkRenderer } from './artwork-renderer'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
+import { Forest } from './forest'
 
 // Get canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
@@ -21,6 +22,7 @@ let trees: TriangleStripArea[] = []
 let artworkRenderers: TriangleStripArtworkRenderer[] = []
 let treeSpeeds: number[] = [] // Random speed multiplier for each tree
 let projectSelection: ProjectSelection | null = null
+let forest: Forest | null = null
 
 // Create storage instance (shared for project management)
 const storage = new IndexedDBStorage('trees', 'v1.0.0')
@@ -100,7 +102,7 @@ async function initializeProject(projectId: string) {
 
   // Create artwork renderers for all trees
   artworkRenderers = trees.map(tree =>
-    new TriangleStripArtworkRenderer(tree, mapper.gl, mapper.projContext, mapper)
+    new TriangleStripArtworkRenderer(tree, mapper!.gl, mapper!.projContext, mapper!)
   )
 
   // Set initial resolution for all renderers
@@ -108,10 +110,13 @@ async function initializeProject(projectId: string) {
     renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
   })
 
+  // Create Forest instance
+  forest = new Forest(mapper!.gl, artworkRenderers, [canvas.width, canvas.height])
+
   // Set render callback
   startTime = Date.now()
   mapper.setRenderCallback((_deltaTime) => {
-    if (!mapper) return
+    if (!mapper || !forest) return
     const gl = mapper.gl
 
     // Clear canvas with dark background
@@ -125,9 +130,10 @@ async function initializeProject(projectId: string) {
         // Debug mode: show the generated texture directly
         artworkRenderers.forEach(renderer => renderer.debugRenderTexture(null))
       } else {
-        // Normal mode: render with flow shader
+        // Normal mode: render with Forest (handles all trees with shadows)
         const time = (Date.now() - startTime) / 1000 // seconds
-        artworkRenderers.forEach((renderer, i) => renderer.render(time * treeSpeeds[i]!, null))
+        forest.update()
+        forest.render(time, null)
       }
     }
 
@@ -170,6 +176,10 @@ async function exitProject() {
   }
 
   // Clear current state
+  if (forest) {
+    forest.dispose()
+    forest = null
+  }
   artworkRenderers.forEach(r => r.destroy())
   artworkRenderers = []
   trees = []
@@ -187,6 +197,11 @@ window.addEventListener('resize', () => {
   artworkRenderers.forEach(renderer => {
     renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
   })
+  // Recreate Forest with new resolution
+  if (forest && mapper) {
+    forest.dispose()
+    forest = new Forest(mapper.gl, artworkRenderers, [canvas.width, canvas.height])
+  }
 })
 
 // Check for last used project or show selection
