@@ -1,0 +1,19 @@
+subdivide areas for proj rendering. for every side: for every edge: subdivide that edge. choose the new location like this: 1/3 * (avg of corners) + 1/3 * (extension of previous edge) + 1/3 (extension of next edge). if no previous edge or not last edge ignore and divide by 2 instead of 3 (or 1 if there is just one edge at all). 
+
+add a fader "roundness octaves" which specifies how many. use 0 decimal places and round for ocataves value. 
+
+For this to work, we need to ensure that both sides have equal amount of points. 
+
+That's why we have to refactor the triangleStripArea handler in web-mapper. 
+
+In the special case where we are at the first edge (0-1) or last one, we insert 2 points from now on!
+when user clicks we insert two points. we insert the second point at the longer side. and we set a special dragging state, so that the second point get's updated while we keep dragging the first point. 
+on dragging end unset the special dragging state. 
+
+we can remove all sideOffset logic
+
+for migration we swap sides if sideOffset is set and we truncate the last point if total point count is odd. 
+
+
+
+
