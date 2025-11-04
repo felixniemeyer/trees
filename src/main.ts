@@ -279,40 +279,38 @@ document.addEventListener('keydown', async (e) => {
     const newTree = await mapper.loadOrCreateArea(`tree-${newIndex}`, () => createDefaultTree(newIndex))
     trees.push(newTree as TriangleStripArea)
 
-    // Generate random speed for new tree (-0.2 to 0.2)
-    const newSpeed = Math.random() * 0.4 - 0.2
-    treeSpeeds.push(newSpeed)
-
-    const newRenderer = new TriangleStripArtworkRenderer(
-      newTree as TriangleStripArea,
-      mapper.gl,
-      mapper.projContext,
-      mapper
-    )
-    newRenderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
-    artworkRenderers.push(newRenderer)
-
     await storage.saveArea('tree-count', trees.length)
-    await storage.saveArea('tree-speeds', treeSpeeds)
+
+    // Recreate Forest with updated trees
+    if (forest) {
+      forest.dispose()
+    }
+    forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
+
     console.log(`Added tree ${newIndex}. Total: ${trees.length}`)
   }
 
   // Arrow Down: Remove last tree
   if (e.key === 'ArrowDown' && trees.length > 0) {
     const lastTree = trees.pop()!
-    const lastRenderer = artworkRenderers.pop()!
-    treeSpeeds.pop() // Remove speed for removed tree
 
     // Delete the area's storage before removing
-    if (lastTree.storageKey) {
-      await storage.saveArea(lastTree.storageKey, null)
+    if ((lastTree as any).storageKey) {
+      await storage.saveArea((lastTree as any).storageKey, null)
     }
 
-    lastRenderer.destroy()
     mapper.removeArea(lastTree)
 
     await storage.saveArea('tree-count', trees.length)
-    await storage.saveArea('tree-speeds', treeSpeeds)
+
+    // Recreate Forest with updated trees
+    if (forest) {
+      forest.dispose()
+    }
+    if (trees.length > 0) {
+      forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
+    }
+
     console.log(`Removed tree. Total: ${trees.length}`)
   }
 })

@@ -32,8 +32,9 @@ export class Forest {
   private quadVAO: WebGLVertexArrayObject
 
   // Shadow parameters
-  private shadowSize: number = 0.1
-  private shadowAlpha: number = 0.1
+  private shadowSize: number = 0.25
+  private shadowAlpha: number = 0.02
+  private shadowAmount = 1.5
 
   constructor(
     gl: WebGL2RenderingContext,
@@ -85,7 +86,7 @@ export class Forest {
     this.treesDepthBuffer = this.createDepthBuffer()
     this.treesFramebuffer = this.createFramebufferWithDepth(this.treesTexture, this.treesDepthBuffer)
 
-    this.shadowMap = this.createTexture()
+    this.shadowMap = this.createShadowTexture()
     this.shadowFramebuffer = this.createFramebuffer(this.shadowMap)
 
     // Create shaders
@@ -109,6 +110,28 @@ export class Forest {
       0,
       gl.RGBA,
       gl.UNSIGNED_BYTE,
+      null
+    )
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    return texture
+  }
+
+  private createShadowTexture(): WebGLTexture {
+    const gl = this.gl
+    const texture = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.R32F,  // Single-channel 32-bit float
+      this.resolution[0],
+      this.resolution[1],
+      0,
+      gl.RED,   // Single channel
+      gl.FLOAT,
       null
     )
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
@@ -216,6 +239,8 @@ export class Forest {
     gl.clearColor(0, 0, 0, 1)
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
+    // Disable blending for opaque tree rendering
+    gl.disable(gl.BLEND)
     gl.enable(gl.DEPTH_TEST)
     gl.depthFunc(gl.LESS)
 
@@ -270,6 +295,8 @@ export class Forest {
     gl.bindTexture(gl.TEXTURE_2D, this.treesTexture)
     gl.uniform1i(this.compositeProgram.uniLocs.u_treesTexture, 0)
 
+    gl.uniform1f(this.compositeProgram.uniLocs.u_shadowAmount, this.shadowAmount)
+
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.shadowMap)
     gl.uniform1i(this.compositeProgram.uniLocs.u_shadowMap, 1)
@@ -292,10 +319,10 @@ export class Forest {
     }
 
     // Clear shadow map since depth relationships changed
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFramebuffer)
-    gl.clearColor(0, 0, 0, 0)
-    gl.clear(gl.COLOR_BUFFER_BIT)
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    // gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFramebuffer)
+    // gl.clearColor(0, 0, 0, 0)
+    // gl.clear(gl.COLOR_BUFFER_BIT)
+    // gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
   dispose() {

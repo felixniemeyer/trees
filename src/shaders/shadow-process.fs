@@ -7,6 +7,7 @@ out vec4 fragColor;
 uniform sampler2D u_treesTexture;
 uniform float u_shadowSize;
 uniform float u_shadowAlpha;
+
 uniform vec2 u_randomSeed;
 uniform vec2 u_aspect;
 
@@ -35,10 +36,13 @@ void main() {
         float normalizedLookupDist = lookupLength / u_shadowSize;
 
         // Shade is strongest at edge of gradient
-        float shade = 0.5 - min(0.5, gradientLength - normalizedLookupDist);
+        // Maps from 1.0 at center to 0.0 at edge
+        float shade = 1.0 - min(1.0, gradientLength - normalizedLookupDist);
 
-        fragColor = vec4(0.0, 0.0, 0.0, shade * u_shadowAlpha);
+        // Output shade in red channel with alpha blending weight
+        fragColor = vec4(shade, 0.0, 0.0, u_shadowAlpha);
     } else {
-        fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        // No shadow - output zero with blend weight
+        fragColor = vec4(0.0, 0.0, 0.0, u_shadowAlpha);
     }
 }
