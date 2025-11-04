@@ -45,7 +45,6 @@ export class ProjectSelection {
     // Get references to elements
     this.inputElement = container.querySelector('#project-name-input')
     const createButton = container.querySelector('.create-project-button')
-    const projectList = container.querySelector('#project-list')
 
     // Setup event listeners
     if (this.inputElement) {

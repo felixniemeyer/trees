@@ -5,6 +5,7 @@ import { WebMapper, TriangleStripArea, Point } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 import { Forest } from './forest'
+import { Controls, Transports } from 'av-controls'
 
 // Get canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
@@ -24,9 +25,298 @@ let forest: Forest | null = null
 // Audio reactivity
 let audioContext: AudioContext | null = null
 let analyser: AnalyserNode | null = null
-let audioDataArray: Float32Array | null = null
+let audioDataArray: Float32Array<ArrayBuffer> | null = null
 let audioEnabled = false
 let audioEnergies: number[] = []
+
+// ========== AV-CONTROLS ==========
+// Trees Tab Controls
+const addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('add tree', 0, 0, 20, 15, '#4a8')
+), async () => {
+  if (!mapper || !forest) return
+  const newIndex = trees.length
+  const newTree = await mapper.loadOrCreateArea(`tree-${newIndex}`, () => createDefaultTree(newIndex))
+  trees.push(newTree as TriangleStripArea)
+  await storage.saveArea('tree-count', trees.length)
+  forest.dispose()
+  forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
+  console.log(`Added tree ${newIndex}. Total: ${trees.length}`)
+})
+
+const removeTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('remove tree', 20, 0, 20, 15, '#a48')
+), async () => {
+  if (!mapper || !forest || trees.length === 0) return
+  const lastTree = trees.pop()!
+  if ((lastTree as any).storageKey) {
+    await storage.saveArea((lastTree as any).storageKey, null)
+  }
+  mapper.removeArea(lastTree)
+  await storage.saveArea('tree-count', trees.length)
+  forest.dispose()
+  if (trees.length > 0) {
+    forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
+  }
+  console.log(`Removed tree. Total: ${trees.length}`)
+})
+
+const randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('randomize depths', 40, 0, 30, 15, '#8a4')
+), () => {
+  if (forest) {
+    forest.randomizeDepths()
+    console.log('Randomized tree depths')
+  }
+})
+
+const shadowSizeFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('shadow size', 0, 15, 20, 30, '#58a'),
+    0.25, 0, 1, 2
+  ),
+  (value) => {
+    if (forest) forest.setShadowSize(value)
+  }
+)
+
+const shadowAlphaFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('shadow alpha', 20, 15, 20, 30, '#58a'),
+    0.02, 0, 0.1, 3
+  ),
+  (value) => {
+    if (forest) forest.setShadowAlpha(value)
+  }
+)
+
+const shadowAmountFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('shadow amount', 40, 15, 20, 30, '#58a'),
+    1.5, 0, 3, 2
+  ),
+  (value) => {
+    if (forest) forest.setShadowAmount(value)
+  }
+)
+
+const audioToggle = new Controls.Switch.Receiver(
+  new Controls.Switch.Spec(
+    new Controls.Base.Args('audio reactivity', 70, 0, 30, 15, '#a85'),
+    false
+  ),
+  async () => {
+    if (!audioEnabled && !audioContext) {
+      const success = await initAudio()
+      if (success) {
+        audioEnabled = true
+        audioToggle.on = true
+        console.log('Audio reactivity: ON')
+      }
+    } else {
+      audioEnabled = !audioEnabled
+      audioToggle.on = audioEnabled
+      console.log(`Audio reactivity: ${audioEnabled ? 'ON' : 'OFF'}`)
+    }
+  }
+)
+
+const shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('shuffle frequencies', 70, 15, 30, 15, '#a58')
+), () => {
+  if (forest) {
+    forest.shuffleFrequencies()
+    console.log('Shuffled frequency assignments')
+  }
+})
+
+// Mapping Tab Controls (from regenbogenanglerfisch)
+const toggleUIControl = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('toggle edit mode', 0, 0, 20, 15, '#888')
+), () => {
+  // Don't toggle edit mode in photo mode (photo mode always has edit mode enabled)
+  if (mapper?.getPhotoMode()) {
+    console.log('Cannot disable edit mode in photo mode')
+    return
+  }
+  isEditMode = !isEditMode
+  mapper?.setEditMode(isEditMode)
+  console.log(`Edit mode: ${isEditMode ? 'ON' : 'OFF'}`)
+})
+
+const resetPositionsButton = new Controls.ConfirmButton.Receiver(
+  new Controls.ConfirmButton.Spec(
+    new Controls.Base.Args('reset mapping points', 0, 15, 20, 15, '#f44')
+  ),
+  async () => {
+    if (mapper) {
+      await mapper.resetAll()
+    }
+  }
+)
+
+const exitProjectPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('exit project', 20, 0, 20, 15, '#a44')
+), async () => {
+  await exitProject()
+})
+
+const uploadPhotoPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('upload photo', 40, 0, 20, 15, '#4a4')
+), () => {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.onchange = async (event) => {
+    const file = (event.target as HTMLInputElement).files?.[0]
+    if (!file || !mapper) return
+    const image = new Image()
+    const url = URL.createObjectURL(file)
+    image.onload = () => {
+      mapper!.setPhoto(image)
+      console.log('Photo loaded and set. Switched to photo mode.')
+      URL.revokeObjectURL(url)
+    }
+    image.onerror = () => {
+      console.error('Failed to load photo')
+      URL.revokeObjectURL(url)
+    }
+    image.src = url
+  }
+  input.click()
+})
+
+const photoModeSwitch = new Controls.Switch.Receiver(
+  new Controls.Switch.Spec(
+    new Controls.Base.Args('photo mode', 20, 15, 20, 15, '#48a'),
+    true  // WebMapper starts in photo mode by default
+  ),
+  () => {
+    mapper?.setPhotoMode(photoModeSwitch.on)
+    console.log(`${photoModeSwitch.on ? 'Photo' : 'Proj'} mode`)
+  }
+)
+
+const debugModeSwitch = new Controls.Switch.Receiver(
+  new Controls.Switch.Spec(
+    new Controls.Base.Args('debug mode', 80, 0, 20, 15, '#844'),
+    false
+  ),
+  () => {
+    debugMode = debugModeSwitch.on
+    console.log(`Debug mode: ${debugMode ? 'ON' : 'OFF'}`)
+  }
+)
+
+const joystickControl = new Controls.Joystick.Receiver(
+  new Controls.Joystick.Spec(
+    new Controls.Base.Args('joystick', 20, 30, 60, 40, '#4a8'),
+    { x: 0, y: 0 }
+  ),
+)
+
+const snapRadiusFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('snap radius', 80, 0, 20, 30, '#585'),
+    0.05, 0, 0.1, 2
+  )
+)
+
+const snappingToggle = new Controls.Switch.Receiver(
+  new Controls.Switch.Spec(
+    new Controls.Base.Args('snapping', 60, 15, 20, 15, '#636'),
+    true
+  )
+)
+
+const handleSizeFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('handle size', 60, 70, 20, 30, '#474'),
+    0.05, 0, 0.1, 2
+  ),
+  (value) => {
+    mapper?.setHandleSize(value)
+  }
+)
+
+const handleLineWidthFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('handle line width', 80, 70, 20, 30, '#447'),
+    0.1, 0.1, 0.5, 2
+  ),
+  (value) => {
+    mapper?.setHandleLineWidth(value)
+  }
+)
+
+const previousAreaPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('previous area', 0, 30, 20, 20, '#a5a')
+), () => {
+  // TODO: implement selectPreviousArea
+  console.log('Previous area (not implemented)')
+})
+
+const nextAreaPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('next area', 0, 50, 20, 20, '#a5a')
+), () => {
+  // TODO: implement selectNextArea
+  console.log('Next area (not implemented)')
+})
+
+const deselectPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('deselect point', 40, 15, 20, 15, '#5aa')
+), () => {
+  // TODO: implement deselectPoint
+  console.log('Deselect point (not implemented)')
+})
+
+const previousPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('previous point', 80, 30, 20, 20, '#aa5')
+), () => {
+  // TODO: implement selectPreviousPoint
+  console.log('Previous point (not implemented)')
+})
+
+const nextPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('next point', 80, 50, 20, 20, '#aa5')
+), () => {
+  // TODO: implement selectNextPoint
+  console.log('Next point (not implemented)')
+})
+
+const moveGroupedPointsSwitch = new Controls.Switch.Receiver(
+  new Controls.Switch.Spec(
+    new Controls.Base.Args('move grouped points', 60, 0, 20, 15, '#a5a'),
+    true
+  ),
+)
+
+const cursorWidthFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('cursor width', 0, 70, 20, 30, '#774'),
+    0.005, 0.001, 0.02, 3
+  ),
+  (value) => {
+    mapper?.setCursorWidth(value)
+  }
+)
+
+const cursorLengthFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('cursor length', 20, 70, 20, 30, '#774'),
+    0.5, 0, 2, 2
+  ),
+  (value) => {
+    mapper?.setCursorLength(value)
+  }
+)
+
+const joystickSensitivityFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('joystick sensitivity', 40, 70, 20, 30, '#927'),
+    1, 0.1, 2, 2
+  )
+)
 
 // Create storage instance (shared for project management)
 const storage = new IndexedDBStorage('trees', 'v1.0.0')
@@ -120,9 +410,19 @@ async function initializeProject(projectId: string) {
 
   // Set render callback
   startTime = Date.now()
-  mapper.setRenderCallback((_deltaTime) => {
+  mapper.setRenderCallback((deltaTime) => {
     if (!mapper || !forest) return
     const gl = mapper.gl
+
+    // Joystick-based point movement
+    if (joystickControl.x !== 0 || joystickControl.y !== 0) {
+      const sensitivity = joystickSensitivityFader.value
+      const dx = joystickControl.x * sensitivity * deltaTime * 0.001
+      const dy = -joystickControl.y * sensitivity * deltaTime * 0.001
+
+      // Move selected point if one exists
+      mapper.moveSelectedPoint(dx, dy)
+    }
 
     // Clear canvas with dark background
     gl.viewport(0, 0, canvas.width, canvas.height)
@@ -151,6 +451,10 @@ async function initializeProject(projectId: string) {
 
     // WebMapper automatically renders areas/handles in edit mode
   })
+
+  // Sync control states with mapper's current state
+  photoModeSwitch.on = mapper.getPhotoMode()
+  debugModeSwitch.on = debugMode
 
   console.log('Trees app initialized')
   console.log(`Loaded ${trees.length} tree(s) for project ${projectId}`)
@@ -210,6 +514,77 @@ window.addEventListener('resize', () => {
   }
 })
 
+// ========== AV-CONTROLS SETUP ==========
+// Set up control panel with tabs
+function setupControlPanel() {
+  // Trees Tab
+  const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
+    new Controls.Base.Args('Trees', 0, 0, 100, 100, '#333')
+  ), {
+    'add tree': addTreePad,
+    'remove tree': removeTreePad,
+    'randomize depths': randomizeDepthsPad,
+    'shadow size': shadowSizeFader,
+    'shadow alpha': shadowAlphaFader,
+    'shadow amount': shadowAmountFader,
+    'audio reactivity': audioToggle,
+    'shuffle frequencies': shuffleFrequenciesPad,
+  })
+
+  // Mapping Tab
+  const mappingTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
+    new Controls.Base.Args('Mapping', 0, 0, 100, 100, '#333')
+  ), {
+    'toggle edit mode': toggleUIControl,
+    'reset mapping points': resetPositionsButton,
+    'exit project': exitProjectPad,
+    'upload photo': uploadPhotoPad,
+    'photo mode': photoModeSwitch,
+    'debug mode': debugModeSwitch,
+    'joystick': joystickControl,
+    'snap radius': snapRadiusFader,
+    'snapping': snappingToggle,
+    'handle size': handleSizeFader,
+    'handle line width': handleLineWidthFader,
+    'previous area': previousAreaPad,
+    'next area': nextAreaPad,
+    'deselect point': deselectPointPad,
+    'previous point': previousPointPad,
+    'next point': nextPointPad,
+    'move grouped points': moveGroupedPointsSwitch,
+    'cursor width': cursorWidthFader,
+    'cursor length': cursorLengthFader,
+    'joystick sensitivity': joystickSensitivityFader,
+  })
+
+  // Create tabs
+  const tabs = new Controls.Tabs.Receiver(new Controls.Tabs.SpecWithoutControls(
+    new Controls.Base.Args('trees-controls', 0, 0, 100, 100, '#222'),
+    'Trees' // initially active tab
+  ), {
+    'Trees': treesTab,
+    'Mapping': mappingTab,
+  })
+
+  // Root panel
+  const rootPanel = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
+    new Controls.Base.Args('trees-app', 0, 0, 100, 100, '#111')
+  ), {
+    'tabs': tabs,
+  })
+
+  // Set up Window transport
+  if (window.opener) {
+    new Transports.Window.Receiver(window.opener, 'trees-controls', rootPanel)
+    console.log('Control panel connected to opener window')
+  } else {
+    console.warn('No opener window found - controls will not be displayed')
+  }
+}
+
+// Initialize controls after project is loaded
+setupControlPanel()
+
 // Check for last used project or show selection
 const lastProjectId = storage.getLastUsedProject()
 if (lastProjectId) {
@@ -224,174 +599,23 @@ if (lastProjectId) {
   showProjectSelection()
 }
 
-// Keyboard handlers
-document.addEventListener('keydown', async (e) => {
-  // Exit project with 'Q'
-  if (e.key === 'q' || e.key === 'Q') {
-    await exitProject()
-    return
+// Keyboard handlers - Only Shift for WebMapper precision mode
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift' && mapper) {
+    mapper.setShiftHeld(true)
   }
+})
 
-  // Skip other handlers if no project is loaded
-  if (!mapper) return
-
-  // Toggle photo/proj mode with 'M'
-  if (e.key === 'm' || e.key === 'M') {
-    const currentMode = mapper.getPhotoMode()
-    mapper.setPhotoMode(!currentMode)
-    console.log(`Switched to ${!currentMode ? 'photo' : 'proj'} mode`)
-  }
-
-  // Toggle edit mode with 'E' (only in proj mode, photo mode always has edit mode)
-  if (e.key === 'e' || e.key === 'E') {
-    if (!mapper.getPhotoMode()) {
-      isEditMode = !isEditMode
-      mapper.setEditMode(isEditMode)
-      console.log(`Edit mode: ${isEditMode ? 'ON' : 'OFF'}`)
-    } else {
-      console.log('Cannot disable edit mode in photo mode')
-    }
-  }
-
-  // Photo upload with 'P'
-  if (e.key === 'p' || e.key === 'P') {
-    // Create file input element
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'image/*'
-
-    input.onchange = async (event) => {
-      const file = (event.target as HTMLInputElement).files?.[0]
-      if (!file) return
-
-      console.log('Photo selected:', file.name)
-
-      // Create image element and load the file
-      const image = new Image()
-      const url = URL.createObjectURL(file)
-
-      image.onload = () => {
-        // Set photo in mapper (automatically switches to photo mode)
-        mapper.setPhoto(image)
-        console.log('Photo loaded and set. Switched to photo mode.')
-
-        // Clean up object URL
-        URL.revokeObjectURL(url)
-      }
-
-      image.onerror = () => {
-        console.error('Failed to load photo')
-        URL.revokeObjectURL(url)
-      }
-
-      image.src = url
-    }
-
-    // Trigger file dialog
-    input.click()
-  }
-
-  // Toggle debug texture view with 'D'
-  if (e.key === 'd' || e.key === 'D') {
-    if (!mapper.getPhotoMode()) {
-      debugMode = !debugMode
-      console.log(`Debug texture view: ${debugMode ? 'ON' : 'OFF'}`)
-    }
-  }
-
-  // Randomize tree depths with 'N'
-  if (e.key === 'n' || e.key === 'N') {
-    if (forest) {
-      forest.randomizeDepths()
-      console.log('Randomized tree depths')
-    }
-  }
-
-  // Toggle audio reactivity with 'A'
-  if (e.key === 'a' || e.key === 'A') {
-    if (!audioEnabled && !audioContext) {
-      // Initialize audio for first time
-      const success = await initAudio()
-      if (success) {
-        audioEnabled = true
-        console.log('Audio reactivity: ON')
-      }
-    } else {
-      audioEnabled = !audioEnabled
-      console.log(`Audio reactivity: ${audioEnabled ? 'ON' : 'OFF'}`)
-    }
-  }
-
-  // Shuffle frequency assignments with 'T'
-  if (e.key === 't' || e.key === 'T') {
-    if (forest) {
-      forest.shuffleFrequencies()
-      console.log('Shuffled frequency assignments')
-    }
-  }
-
-  // Reset all areas with 'R'
-  if (e.key === 'R') {
-    if (confirm('Reset all trees and clear storage? This cannot be undone.')) {
-      await mapper.resetAll()
-    }
-  }
-
-  // Arrow Up: Add new tree
-  if (e.key === 'ArrowUp') {
-    const newIndex = trees.length
-
-    // Use loadOrCreateArea to properly handle storage setup
-    const newTree = await mapper.loadOrCreateArea(`tree-${newIndex}`, () => createDefaultTree(newIndex))
-    trees.push(newTree as TriangleStripArea)
-
-    await storage.saveArea('tree-count', trees.length)
-
-    // Recreate Forest with updated trees
-    if (forest) {
-      forest.dispose()
-    }
-    forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
-
-    console.log(`Added tree ${newIndex}. Total: ${trees.length}`)
-  }
-
-  // Arrow Down: Remove last tree
-  if (e.key === 'ArrowDown' && trees.length > 0) {
-    const lastTree = trees.pop()!
-
-    // Delete the area's storage before removing
-    if ((lastTree as any).storageKey) {
-      await storage.saveArea((lastTree as any).storageKey, null)
-    }
-
-    mapper.removeArea(lastTree)
-
-    await storage.saveArea('tree-count', trees.length)
-
-    // Recreate Forest with updated trees
-    if (forest) {
-      forest.dispose()
-    }
-    if (trees.length > 0) {
-      forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
-    }
-
-    console.log(`Removed tree. Total: ${trees.length}`)
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift' && mapper) {
+    mapper.setShiftHeld(false)
   }
 })
 
 // Log controls on startup
-console.log('Trees Mapper - Controls:')
-console.log('- Q key: Exit project / Switch projects')
+console.log('Trees Mapper - AV-Controls Active')
+console.log('- Open control panel in separate window to access all controls')
+console.log('- Shift + drag: Precision mode')
 console.log('- Left click + drag: Move points')
 console.log('- Shift + hover edge: Preview insertion point')
 console.log('- Shift + click edge: Insert new point(s)')
-console.log('- Shift + drag: Precision mode')
-console.log('- P key: Upload photo')
-console.log('- M key: Toggle photo/proj mode')
-console.log('- E key: Toggle edit mode (proj mode only)')
-console.log('- D key: Toggle debug texture view (proj mode only)')
-console.log('- R key: Reset all trees and clear storage')
-console.log('- Arrow Up: Add new tree')
-console.log('- Arrow Down: Remove last tree')

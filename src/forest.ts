@@ -1,8 +1,6 @@
 import { TriangleStripArtworkRenderer } from './artwork-renderer'
 import ShaderProgram from '../../web-mapper/src/utils/shader-program'
-import { TriangleStripArea } from 'web-mapper'
-import type { ProjRenderContext } from '../../web-mapper/src/area-renderers/proj/base'
-import type { WebMapper } from '../../web-mapper/src/web-mapper'
+import { TriangleStripArea, type WebMapper, type ProjRenderContext } from 'web-mapper'
 import { vec2 } from 'gl-matrix'
 import shadowProcessVs from './shaders/shadow-process.vs'
 import shadowProcessFs from './shaders/shadow-process.fs'
@@ -403,8 +401,6 @@ export class Forest {
   }
 
   randomizeDepths() {
-    const gl = this.gl
-
     // Generate new random depths for all trees
     for (let i = 0; i < this.areas.length; i++) {
       const newDepth = Math.random()
@@ -418,6 +414,19 @@ export class Forest {
     // gl.clearColor(0, 0, 0, 0)
     // gl.clear(gl.COLOR_BUFFER_BIT)
     // gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+  }
+
+  // Public setters for shadow parameters (for av-controls)
+  setShadowSize(value: number) {
+    this.shadowSize = value
+  }
+
+  setShadowAlpha(value: number) {
+    this.shadowAlpha = value
+  }
+
+  setShadowAmount(value: number) {
+    this.shadowAmount = value
   }
 
   dispose() {
