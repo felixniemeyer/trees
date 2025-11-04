@@ -1,6 +1,8 @@
 add av-controls. use postmessage/tab transport not websockets. 
 then add faders and pads and switches to replace all the keystrokes we currently have. 
 "generate a new depth order" for example. 
+Also add faders for shadow size and shadow amount and shadowAlpha. 
+organize controls in tabs. 
 or switch edit mode. 
 actually, copy the web-mapper control page from /home/felix/dev/graphics/regenbogenanglerfisch/artwork-app/src/loop.ts : 
   // Global Controls

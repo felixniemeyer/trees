@@ -331,6 +331,9 @@ export class Forest {
     gl.bindTexture(gl.TEXTURE_2D, this.shadowMap)
     gl.uniform1i(this.compositeProgram.uniLocs.u_shadowMap, 1)
 
+    // Set resolution for FXAA
+    gl.uniform2f(this.compositeProgram.uniLocs.u_resolution, this.resolution[0], this.resolution[1])
+
     // Draw fullscreen quad
     gl.bindVertexArray(this.quadVAO)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
