@@ -1,5 +1,9 @@
 import { TriangleStripArtworkRenderer } from './artwork-renderer'
 import ShaderProgram from '../../web-mapper/src/utils/shader-program'
+import { TriangleStripArea } from 'web-mapper'
+import type { ProjRenderContext } from '../../web-mapper/src/area-renderers/proj/base'
+import type { WebMapper } from '../../web-mapper/src/web-mapper'
+import { vec2 } from 'gl-matrix'
 import shadowProcessVs from './shaders/shadow-process.vs'
 import shadowProcessFs from './shaders/shadow-process.fs'
 import compositeVs from './shaders/composite.vs'
@@ -7,7 +11,9 @@ import compositeFs from './shaders/composite.fs'
 
 export class Forest {
   private gl: WebGL2RenderingContext
-  private trees: TriangleStripArtworkRenderer[]
+  private areas: TriangleStripArea[]
+  private renderers: TriangleStripArtworkRenderer[]
+  private treeSpeeds: number[]
   private treeDepths: number[]
   private resolution: [number, number]
 
@@ -31,15 +37,48 @@ export class Forest {
 
   constructor(
     gl: WebGL2RenderingContext,
-    trees: TriangleStripArtworkRenderer[],
+    areas: TriangleStripArea[],
+    renderContext: ProjRenderContext,
+    webMapper: WebMapper,
     resolution: [number, number]
   ) {
     this.gl = gl
-    this.trees = trees
+    this.areas = areas
     this.resolution = resolution
 
-    // Assign random depths to trees
-    this.treeDepths = trees.map(() => Math.random())
+    // Create renderers for each area
+    this.renderers = areas.map(area =>
+      new TriangleStripArtworkRenderer(area, gl, renderContext, webMapper)
+    )
+
+    // Set resolution for all renderers
+    this.renderers.forEach(renderer => {
+      renderer.setResolution(vec2.fromValues(resolution[0], resolution[1]))
+    })
+
+    // Initialize speeds and depths from metadata or generate new ones
+    this.treeSpeeds = []
+    this.treeDepths = []
+
+    for (const area of areas) {
+      if (!area.metadata) {
+        area.metadata = {}
+      }
+
+      // Read or generate speed
+      if (area.metadata.speed === undefined) {
+        area.metadata.speed = Math.random() * 0.4 - 0.2 // -0.2 to 0.2
+        area.save()
+      }
+      this.treeSpeeds.push(area.metadata.speed)
+
+      // Read or generate depth
+      if (area.metadata.depth === undefined) {
+        area.metadata.depth = Math.random()
+        area.save()
+      }
+      this.treeDepths.push(area.metadata.depth)
+    }
 
     // Create render targets
     this.treesTexture = this.createTexture()
@@ -180,8 +219,8 @@ export class Forest {
     gl.enable(gl.DEPTH_TEST)
     gl.depthFunc(gl.LESS)
 
-    for (let i = 0; i < this.trees.length; i++) {
-      this.trees[i]!.render(time, this.treesFramebuffer, this.treeDepths[i]!)
+    for (let i = 0; i < this.renderers.length; i++) {
+      this.renderers[i]!.render(time * this.treeSpeeds[i]!, this.treesFramebuffer, this.treeDepths[i]!)
     }
 
     gl.disable(gl.DEPTH_TEST)
@@ -239,6 +278,24 @@ export class Forest {
     gl.bindVertexArray(this.quadVAO)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
     gl.bindVertexArray(null)
+  }
+
+  randomizeDepths() {
+    const gl = this.gl
+
+    // Generate new random depths for all trees
+    for (let i = 0; i < this.areas.length; i++) {
+      const newDepth = Math.random()
+      this.treeDepths[i] = newDepth
+      this.areas[i]!.metadata!.depth = newDepth
+      this.areas[i]!.save()
+    }
+
+    // Clear shadow map since depth relationships changed
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFramebuffer)
+    gl.clearColor(0, 0, 0, 0)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
   dispose() {

@@ -23,6 +23,9 @@ void main() {
   // Output RGB with depth in alpha channel
   fragColor = vec4(color.rgb, u_depth);
 
+  // Write depth to depth buffer for depth testing
+  gl_FragDepth = u_depth;
+
   //debug
   // fragColor = vec4(1);
 }

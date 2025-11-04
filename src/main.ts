@@ -2,7 +2,6 @@ import './style.css'
 import './project-selection.css'
 import { vec2, vec3 } from 'gl-matrix'
 import { WebMapper, TriangleStripArea, Point } from 'web-mapper'
-import { TriangleStripArtworkRenderer } from './artwork-renderer'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 import { Forest } from './forest'
@@ -19,8 +18,6 @@ let isEditMode = true
 let debugMode = false
 let startTime = Date.now()
 let trees: TriangleStripArea[] = []
-let artworkRenderers: TriangleStripArtworkRenderer[] = []
-let treeSpeeds: number[] = [] // Random speed multiplier for each tree
 let projectSelection: ProjectSelection | null = null
 let forest: Forest | null = null
 
@@ -81,37 +78,14 @@ async function initializeProject(projectId: string) {
   // Load trees from storage
   const treeCount = await storage.loadArea('tree-count') || 1
   trees = []
-  treeSpeeds = []
-
-  // Load or generate speeds for each tree
-  const savedSpeeds = await storage.loadArea('tree-speeds') as number[] | null
 
   for (let i = 0; i < treeCount; i++) {
     const tree = await mapper.loadOrCreateArea(`tree-${i}`, () => createDefaultTree(i))
     trees.push(tree as TriangleStripArea)
-
-    // Use saved speed or generate new random speed (-0.2 to 0.2)
-    const speed = savedSpeeds?.[i] ?? (Math.random() * 0.4 - 0.2)
-    treeSpeeds.push(speed)
   }
 
-  // Save speeds if they were newly generated
-  if (!savedSpeeds) {
-    await storage.saveArea('tree-speeds', treeSpeeds)
-  }
-
-  // Create artwork renderers for all trees
-  artworkRenderers = trees.map(tree =>
-    new TriangleStripArtworkRenderer(tree, mapper!.gl, mapper!.projContext, mapper!)
-  )
-
-  // Set initial resolution for all renderers
-  artworkRenderers.forEach(renderer => {
-    renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
-  })
-
-  // Create Forest instance
-  forest = new Forest(mapper!.gl, artworkRenderers, [canvas.width, canvas.height])
+  // Create Forest instance - it will handle renderer creation and metadata management
+  forest = new Forest(mapper!.gl, trees, mapper!.projContext, mapper!, [canvas.width, canvas.height])
 
   // Set render callback
   startTime = Date.now()
@@ -125,16 +99,11 @@ async function initializeProject(projectId: string) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
     // Render artwork in proj mode (render to screen, framebuffer = null)
-    if (!mapper.getPhotoMode()) {
-      if (debugMode) {
-        // Debug mode: show the generated texture directly
-        artworkRenderers.forEach(renderer => renderer.debugRenderTexture(null))
-      } else {
-        // Normal mode: render with Forest (handles all trees with shadows)
-        const time = (Date.now() - startTime) / 1000 // seconds
-        forest.update()
-        forest.render(time, null)
-      }
+    if (!mapper.getPhotoMode() && !debugMode) {
+      // Normal mode: render with Forest (handles all trees with shadows)
+      const time = (Date.now() - startTime) / 1000 // seconds
+      forest.update()
+      forest.render(time, null)
     }
 
     // WebMapper automatically renders areas/handles in edit mode
@@ -180,10 +149,7 @@ async function exitProject() {
     forest.dispose()
     forest = null
   }
-  artworkRenderers.forEach(r => r.destroy())
-  artworkRenderers = []
   trees = []
-  treeSpeeds = []
 
   mapper.destroy()
   mapper = null
@@ -194,13 +160,10 @@ async function exitProject() {
 
 // Update artwork resolution on window resize
 window.addEventListener('resize', () => {
-  artworkRenderers.forEach(renderer => {
-    renderer.setResolution(vec2.fromValues(canvas.width, canvas.height))
-  })
   // Recreate Forest with new resolution
   if (forest && mapper) {
     forest.dispose()
-    forest = new Forest(mapper.gl, artworkRenderers, [canvas.width, canvas.height])
+    forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
   }
 })
 
@@ -290,6 +253,14 @@ document.addEventListener('keydown', async (e) => {
     if (!mapper.getPhotoMode()) {
       debugMode = !debugMode
       console.log(`Debug texture view: ${debugMode ? 'ON' : 'OFF'}`)
+    }
+  }
+
+  // Randomize tree depths with 'N'
+  if (e.key === 'n' || e.key === 'N') {
+    if (forest) {
+      forest.randomizeDepths()
+      console.log('Randomized tree depths')
     }
   }
 
