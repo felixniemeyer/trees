@@ -11,9 +11,11 @@ uniform mat4 projectionMatrix;
 
 // Output to fragment shader
 out vec2 v_uv;
+out float v_vertexId;
 
 void main() {
   v_uv = uv;
+  v_vertexId = float(gl_VertexID);
 
   // Apply projection matrix for proper 3D to 2D transformation
   gl_Position = projectionMatrix * vec4(position, 1.0);

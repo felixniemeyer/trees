@@ -37,6 +37,7 @@ export class Forest {
   // Audio reactivity
   private audioOffsets: number[] = []
   private smoothedEnergies: number[] = []
+  private audioReactivityScale: number = 0.5
   private lastFrameTime: number = performance.now()
 
   // Tree selection
@@ -385,8 +386,7 @@ export class Forest {
       this.smoothedEnergies[i] = this.smoothedEnergies[i]! + (normalizedEnergy - this.smoothedEnergies[i]!) * smoothFactor
 
       // Accumulate audio offset (sensitivity can be adjusted)
-      const sensitivity = 2.0
-      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * sensitivity * deltaTime
+      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * deltaTime * this.audioReactivityScale
     }
   }
 
@@ -436,6 +436,10 @@ export class Forest {
 
   setShadowAmount(value: number) {
     this.shadowAmount = value
+  }
+
+  setAudioReactivityScale(value: number) {
+    this.audioReactivityScale = value
   }
 
   // Tree selection methods

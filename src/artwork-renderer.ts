@@ -353,20 +353,20 @@ export class TriangleStripArtworkRenderer {
         let sum = vec3.clone(midpoint)
         let divisor = 1
 
-        // Previous edge contribution: B + (B - A) / 2
+        // Previous edge contribution: B + (B - A) / 3
         if (i > 0) {
           const A = sidePoints[i - 1]!
           const edgeVector = vec3.sub(vec3.create(), B, A)
-          const extendedB = vec3.scaleAndAdd(vec3.create(), B, edgeVector, 0.5)
+          const extendedB = vec3.scaleAndAdd(vec3.create(), B, edgeVector, 1.0 / 3.0)
           vec3.add(sum, sum, extendedB)
           divisor++
         }
 
-        // Next edge contribution: C + (C - D) / 2
+        // Next edge contribution: C + (C - D) / 3
         if (i < sidePoints.length - 2) {
           const D = sidePoints[i + 2]!
           const edgeVector = vec3.sub(vec3.create(), C, D)
-          const extendedC = vec3.scaleAndAdd(vec3.create(), C, edgeVector, 0.5)
+          const extendedC = vec3.scaleAndAdd(vec3.create(), C, edgeVector, 1.0 / 3.0)
           vec3.add(sum, sum, extendedC)
           divisor++
         }

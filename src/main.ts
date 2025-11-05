@@ -32,7 +32,7 @@ let audioEnergies: number[] = []
 // ========== AV-CONTROLS ==========
 // Trees Tab Controls
 const addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('add tree', 0, 0, 20, 15, '#4a8')
+  new Controls.Base.Args('add tree', 60, 0, 20, 15, '#4a8')
 ), async () => {
   if (!mapper || !forest) return
   const newIndex = trees.length
@@ -45,7 +45,7 @@ const addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
 })
 
 const removeTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('remove tree', 20, 0, 20, 15, '#a48')
+  new Controls.Base.Args('remove tree', 80, 0, 20, 15, '#a48')
 ), async () => {
   if (!mapper || !forest || trees.length === 0) return
   const lastTree = trees.pop()!
@@ -62,7 +62,7 @@ const removeTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
 })
 
 const randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('randomize depths', 40, 0, 30, 15, '#8a4')
+  new Controls.Base.Args('randomize depths', 0, 0, 20, 15, '#8a4')
 ), () => {
   if (forest) {
     forest.randomizeDepths()
@@ -90,13 +90,13 @@ const deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
 })
 
 const increaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('increase octaves', 60, 45, 30, 15, '#4a5')
+  new Controls.Base.Args('increase octaves', 60, 45, 20, 15, '#4a5')
 ), () => {
   if (forest) forest.increaseOctaves()
 })
 
 const decreaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('decrease octaves', 90, 45, 30, 15, '#5a4')
+  new Controls.Base.Args('decrease octaves', 80, 45, 20, 15, '#5a4')
 ), () => {
   if (forest) forest.decreaseOctaves()
 })
@@ -131,9 +131,19 @@ const shadowAmountFader = new Controls.Fader.Receiver(
   }
 )
 
+const audioScaleFader = new Controls.Fader.Receiver(
+  new Controls.Fader.Spec(
+    new Controls.Base.Args('audio scale', 60, 15, 20, 30, '#a85'),
+    0.5, 0, 1, 2
+  ),
+  (value) => {
+    if (forest) forest.setAudioReactivityScale(value)
+  }
+)
+
 const audioToggle = new Controls.Switch.Receiver(
   new Controls.Switch.Spec(
-    new Controls.Base.Args('audio reactivity', 70, 0, 30, 15, '#a85'),
+    new Controls.Base.Args('audio reactivity', 20, 0, 20, 15, '#a85'),
     false
   ),
   async () => {
@@ -153,7 +163,7 @@ const audioToggle = new Controls.Switch.Receiver(
 )
 
 const shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('shuffle frequencies', 70, 15, 30, 15, '#a58')
+  new Controls.Base.Args('shuffle frequencies', 40, 0, 20, 15, '#a58')
 ), () => {
   if (forest) {
     forest.shuffleFrequencies()
@@ -163,7 +173,7 @@ const shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
 
 // Mapping Tab Controls (from regenbogenanglerfisch)
 const toggleUIControl = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('toggle edit mode', 0, 0, 20, 15, '#888')
+  new Controls.Base.Args('toggle edit mode', 20, 0, 20, 15, '#888')
 ), () => {
   // Don't toggle edit mode in photo mode (photo mode always has edit mode enabled)
   if (mapper?.getPhotoMode()) {
@@ -187,13 +197,13 @@ const resetPositionsButton = new Controls.ConfirmButton.Receiver(
 )
 
 const exitProjectPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('exit project', 20, 0, 20, 15, '#a44')
+  new Controls.Base.Args('exit project', 0, 0, 20, 15, '#a44')
 ), async () => {
   await exitProject()
 })
 
 const uploadPhotoPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('upload photo', 40, 0, 20, 15, '#4a4')
+  new Controls.Base.Args('upload photo', 60, 0, 20, 15, '#4a4')
 ), () => {
   const input = document.createElement('input')
   input.type = 'file'
@@ -217,16 +227,23 @@ const uploadPhotoPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   input.click()
 })
 
-const photoModeSwitch = new Controls.Switch.Receiver(
-  new Controls.Switch.Spec(
-    new Controls.Base.Args('photo mode', 20, 15, 20, 15, '#48a'),
-    true  // WebMapper starts in photo mode by default
-  ),
-  () => {
-    mapper?.setPhotoMode(photoModeSwitch.on)
-    console.log(`${photoModeSwitch.on ? 'Photo' : 'Proj'} mode`)
+const photoModePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('photo mode', 40, 0, 20, 15, '#48a')
+), async () => {
+  if (!mapper) return
+  const currentPhotoMode = mapper.getPhotoMode()
+  const newPhotoMode = !currentPhotoMode
+  mapper.setPhotoMode(newPhotoMode)
+  console.log(`${newPhotoMode ? 'Photo' : 'Proj'} mode`)
+
+  // Save to project metadata
+  const projectId = storage.getCurrentProject()
+  if (projectId) {
+    await storage.updateProjectMetadata(projectId, {
+      photoMode: newPhotoMode
+    })
   }
-)
+})
 
 const debugModeSwitch = new Controls.Switch.Receiver(
   new Controls.Switch.Spec(
@@ -295,7 +312,7 @@ const nextAreaPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
 })
 
 const deselectPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('deselect point', 40, 15, 20, 15, '#5aa')
+  new Controls.Base.Args('deselect point', 20, 15, 20, 15, '#5aa')
 ), () => {
   // TODO: implement deselectPoint
   console.log('Deselect point (not implemented)')
@@ -317,7 +334,7 @@ const nextPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
 
 const moveGroupedPointsSwitch = new Controls.Switch.Receiver(
   new Controls.Switch.Spec(
-    new Controls.Base.Args('move grouped points', 60, 0, 20, 15, '#a5a'),
+    new Controls.Base.Args('move grouped points', 40, 15, 20, 15, '#a5a'),
     true
   ),
 )
@@ -412,6 +429,10 @@ async function initializeProject(projectId: string) {
   // Update project's last modified timestamp
   await storage.touchProject(projectId)
 
+  // Load project metadata to get saved photoMode
+  const project = await storage.getProject(projectId)
+  const savedPhotoMode = project?.photoMode ?? false  // default to proj mode
+
   // Create WebMapper with the storage
   mapper = new WebMapper(canvas, {
     artworkId: 'trees',
@@ -422,6 +443,9 @@ async function initializeProject(projectId: string) {
       deleteAndRecreate: () => storage.deleteAndRecreate()
     }
   })
+
+  // Set photo mode from saved state
+  mapper.setPhotoMode(savedPhotoMode)
 
   // Enable edit mode so we can manipulate points
   isEditMode = true
@@ -484,7 +508,6 @@ async function initializeProject(projectId: string) {
   })
 
   // Sync control states with mapper's current state
-  photoModeSwitch.on = mapper.getPhotoMode()
   debugModeSwitch.on = debugMode
 
   console.log('Trees app initialized')
@@ -511,14 +534,18 @@ function showProjectSelection() {
 async function exitProject() {
   if (!mapper) return
 
-  // Save thumbnail before exiting
+  // Save thumbnail and photo mode before exiting
   const projectId = storage.getCurrentProject()
   if (projectId) {
     try {
       const thumbnail = mapper.captureProjectThumbnail()
-      await storage.updateProjectThumbnail(projectId, thumbnail)
+      const photoMode = mapper.getPhotoMode()
+      await storage.updateProjectMetadata(projectId, {
+        thumbnail,
+        photoMode
+      })
     } catch (error) {
-      console.error('Failed to save thumbnail:', error)
+      console.error('Failed to save project state:', error)
     }
   }
 
@@ -563,6 +590,7 @@ function setupControlPanel() {
     'shadow size': shadowSizeFader,
     'shadow alpha': shadowAlphaFader,
     'shadow amount': shadowAmountFader,
+    'audio scale': audioScaleFader,
     'audio reactivity': audioToggle,
     'shuffle frequencies': shuffleFrequenciesPad,
   })
@@ -575,7 +603,7 @@ function setupControlPanel() {
     'reset mapping points': resetPositionsButton,
     'exit project': exitProjectPad,
     'upload photo': uploadPhotoPad,
-    'photo mode': photoModeSwitch,
+    'photo mode': photoModePad,
     'debug mode': debugModeSwitch,
     'joystick': joystickControl,
     'snap radius': snapRadiusFader,
@@ -640,6 +668,26 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Shift' && mapper) {
     mapper.setShiftHeld(true)
   }
+
+  // Application shortcuts
+  if (e.key === 'm') {
+    // Toggle photo/proj mode
+    photoModePad.receiver()
+  } else if (e.key === 'e') {
+    // Toggle edit mode (only when NOT in photo mode)
+    if (!mapper?.getPhotoMode()) {
+      toggleUIControl.receiver()
+    }
+  } else if (e.key === 'p') {
+    // Upload photo
+    uploadPhotoPad.receiver()
+  } else if (e.key === 'a') {
+    // Toggle audio reactivity
+    audioToggle.receiver()
+  } else if (e.key === 'q') {
+    // Exit project
+    exitProjectPad.receiver()
+  }
 })
 
 document.addEventListener('keyup', (e) => {
@@ -651,7 +699,14 @@ document.addEventListener('keyup', (e) => {
 // Log controls on startup
 console.log('Trees Mapper - AV-Controls Active')
 console.log('- Open control panel in separate window to access all controls')
-console.log('- Shift + drag: Precision mode')
-console.log('- Left click + drag: Move points')
-console.log('- Shift + hover edge: Preview insertion point')
-console.log('- Shift + click edge: Insert new point(s)')
+console.log('Keyboard shortcuts:')
+console.log('  m: Toggle photo/proj mode')
+console.log('  e: Toggle edit mode (proj mode only)')
+console.log('  p: Upload photo')
+console.log('  a: Toggle audio reactivity')
+console.log('  q: Exit project')
+console.log('Mapping controls:')
+console.log('  Shift + drag: Precision mode')
+console.log('  Left click + drag: Move points')
+console.log('  Shift + hover edge: Preview insertion point')
+console.log('  Shift + click edge: Insert new point(s)')

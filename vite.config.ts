@@ -11,4 +11,14 @@ export default defineConfig({
       '**/*.fs'
     ]
   })],
+  server: {
+    watch: {
+      // Watch npm linked packages
+      ignored: ['!**/node_modules/web-mapper/**']
+    }
+  },
+  optimizeDeps: {
+    // Don't pre-bundle npm linked packages so HMR works
+    exclude: ['web-mapper']
+  }
 })
