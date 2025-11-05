@@ -668,26 +668,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Shift' && mapper) {
     mapper.setShiftHeld(true)
   }
-
-  // Application shortcuts
-  if (e.key === 'm') {
-    // Toggle photo/proj mode
-    photoModePad.receiver()
-  } else if (e.key === 'e') {
-    // Toggle edit mode (only when NOT in photo mode)
-    if (!mapper?.getPhotoMode()) {
-      toggleUIControl.receiver()
-    }
-  } else if (e.key === 'p') {
-    // Upload photo
-    uploadPhotoPad.receiver()
-  } else if (e.key === 'a') {
-    // Toggle audio reactivity
-    audioToggle.receiver()
-  } else if (e.key === 'q') {
-    // Exit project
-    exitProjectPad.receiver()
-  }
 })
 
 document.addEventListener('keyup', (e) => {
@@ -699,14 +679,7 @@ document.addEventListener('keyup', (e) => {
 // Log controls on startup
 console.log('Trees Mapper - AV-Controls Active')
 console.log('- Open control panel in separate window to access all controls')
-console.log('Keyboard shortcuts:')
-console.log('  m: Toggle photo/proj mode')
-console.log('  e: Toggle edit mode (proj mode only)')
-console.log('  p: Upload photo')
-console.log('  a: Toggle audio reactivity')
-console.log('  q: Exit project')
-console.log('Mapping controls:')
-console.log('  Shift + drag: Precision mode')
-console.log('  Left click + drag: Move points')
-console.log('  Shift + hover edge: Preview insertion point')
-console.log('  Shift + click edge: Insert new point(s)')
+console.log('- Shift + drag: Precision mode')
+console.log('- Left click + drag: Move points')
+console.log('- Shift + hover edge: Preview insertion point')
+console.log('- Shift + click edge: Insert new point(s)')

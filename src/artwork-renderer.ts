@@ -329,54 +329,52 @@ export class TriangleStripArtworkRenderer {
     // Note: viewport will be set properly in render() method
   }
 
-  private subdivideSide(sidePoints: vec3[], sideUVs: number[]): { positions: vec3[], uvs: number[] } {
+  private subdivideSide(sidePoints: vec3[], sideUVs: number[], cyclic: boolean = false): { positions: vec3[], uvs: number[] } {
     if (sidePoints.length < 2) return { positions: sidePoints, uvs: sideUVs }
 
     const newPositions: vec3[] = []
     const newUVs: number[] = []
+    const n = sidePoints.length
+    const omega = 1.0 / 16.0
+
+    // Helper function to get point with cyclic/replicate boundary handling
+    const getPoint = (index: number): vec3 => {
+      if (cyclic) {
+        // Cyclic: wrap around using modulo
+        const wrappedIndex = ((index % n) + n) % n
+        return sidePoints[wrappedIndex]!
+      } else {
+        // Replicate: clamp to boundaries
+        const clampedIndex = Math.max(0, Math.min(n - 1, index))
+        return sidePoints[clampedIndex]!
+      }
+    }
 
     for (let i = 0; i < sidePoints.length; i++) {
       // Add current point
       newPositions.push(vec3.clone(sidePoints[i]!))
       newUVs.push(sideUVs[i]!)
 
-      // Insert subdivided point between current and next (except after last point)
-      if (i < sidePoints.length - 1) {
-        const B = sidePoints[i]!
-        const C = sidePoints[i + 1]!
+      // Insert subdivided point between current and next (except after last point in non-cyclic mode)
+      if (i < sidePoints.length - 1 || cyclic) {
+        // 4-point interpolation scheme for C¹ smoothness
+        // Q_i = -ω·P_{i-1} + (1/2 + ω)·P_i + (1/2 + ω)·P_{i+1} - ω·P_{i+2}
+        const P_prev = getPoint(i - 1)
+        const P_i = sidePoints[i]!
+        const P_next = getPoint(i + 1)
+        const P_after = getPoint(i + 2)
 
-        // Calculate midpoint
-        const midpoint = vec3.create()
-        vec3.lerp(midpoint, B, C, 0.5)
+        const newPoint = vec3.create()
+        vec3.scaleAndAdd(newPoint, newPoint, P_prev, -omega)
+        vec3.scaleAndAdd(newPoint, newPoint, P_i, 0.5 + omega)
+        vec3.scaleAndAdd(newPoint, newPoint, P_next, 0.5 + omega)
+        vec3.scaleAndAdd(newPoint, newPoint, P_after, -omega)
 
-        // Calculate contributions from neighboring edges
-        let sum = vec3.clone(midpoint)
-        let divisor = 1
-
-        // Previous edge contribution: B + (B - A) / 3
-        if (i > 0) {
-          const A = sidePoints[i - 1]!
-          const edgeVector = vec3.sub(vec3.create(), B, A)
-          const extendedB = vec3.scaleAndAdd(vec3.create(), B, edgeVector, 1.0 / 3.0)
-          vec3.add(sum, sum, extendedB)
-          divisor++
-        }
-
-        // Next edge contribution: C + (C - D) / 3
-        if (i < sidePoints.length - 2) {
-          const D = sidePoints[i + 2]!
-          const edgeVector = vec3.sub(vec3.create(), C, D)
-          const extendedC = vec3.scaleAndAdd(vec3.create(), C, edgeVector, 1.0 / 3.0)
-          vec3.add(sum, sum, extendedC)
-          divisor++
-        }
-
-        // Average the contributions
-        const newPoint = vec3.scale(vec3.create(), sum, 1 / divisor)
         newPositions.push(newPoint)
 
         // UV for subdivided point is midpoint of adjacent UVs
-        const uvMid = (sideUVs[i]! + sideUVs[i + 1]!) / 2
+        const nextIndex = cyclic ? (i + 1) % n : i + 1
+        const uvMid = (sideUVs[i]! + sideUVs[nextIndex]!) / 2
         newUVs.push(uvMid)
       }
     }
@@ -417,8 +415,8 @@ export class TriangleStripArtworkRenderer {
     let oddResult = { positions: oddPoints, uvs: oddUVs }
 
     for (let oct = 0; oct < octaves; oct++) {
-      evenResult = this.subdivideSide(evenResult.positions, evenResult.uvs)
-      oddResult = this.subdivideSide(oddResult.positions, oddResult.uvs)
+      evenResult = this.subdivideSide(evenResult.positions, evenResult.uvs, false)
+      oddResult = this.subdivideSide(oddResult.positions, oddResult.uvs, false)
     }
 
     // Interleave subdivided points back into triangle strip order
