@@ -329,36 +329,118 @@ export class TriangleStripArtworkRenderer {
     // Note: viewport will be set properly in render() method
   }
 
+  private subdivideSide(sidePoints: vec3[], sideUVs: number[]): { positions: vec3[], uvs: number[] } {
+    if (sidePoints.length < 2) return { positions: sidePoints, uvs: sideUVs }
+
+    const newPositions: vec3[] = []
+    const newUVs: number[] = []
+
+    for (let i = 0; i < sidePoints.length; i++) {
+      // Add current point
+      newPositions.push(vec3.clone(sidePoints[i]!))
+      newUVs.push(sideUVs[i]!)
+
+      // Insert subdivided point between current and next (except after last point)
+      if (i < sidePoints.length - 1) {
+        const B = sidePoints[i]!
+        const C = sidePoints[i + 1]!
+
+        // Calculate midpoint
+        const midpoint = vec3.create()
+        vec3.lerp(midpoint, B, C, 0.5)
+
+        // Calculate contributions from neighboring edges
+        let sum = vec3.clone(midpoint)
+        let divisor = 1
+
+        // Previous edge contribution: B + (B - A) / 2
+        if (i > 0) {
+          const A = sidePoints[i - 1]!
+          const edgeVector = vec3.sub(vec3.create(), B, A)
+          const extendedB = vec3.scaleAndAdd(vec3.create(), B, edgeVector, 0.5)
+          vec3.add(sum, sum, extendedB)
+          divisor++
+        }
+
+        // Next edge contribution: C + (C - D) / 2
+        if (i < sidePoints.length - 2) {
+          const D = sidePoints[i + 2]!
+          const edgeVector = vec3.sub(vec3.create(), C, D)
+          const extendedC = vec3.scaleAndAdd(vec3.create(), C, edgeVector, 0.5)
+          vec3.add(sum, sum, extendedC)
+          divisor++
+        }
+
+        // Average the contributions
+        const newPoint = vec3.scale(vec3.create(), sum, 1 / divisor)
+        newPositions.push(newPoint)
+
+        // UV for subdivided point is midpoint of adjacent UVs
+        const uvMid = (sideUVs[i]! + sideUVs[i + 1]!) / 2
+        newUVs.push(uvMid)
+      }
+    }
+
+    return { positions: newPositions, uvs: newUVs }
+  }
+
   private updateVertexBuffers() {
     const points = this.area.points
     const pointCount = points.length
 
     if (pointCount < 2) return
 
-    this.vertexCount = pointCount
+    // Get octaves from metadata (default 0 = no subdivision)
+    const octaves = this.area.metadata?.octaves || 0
 
-    // Build position and UV arrays
-    const positions: number[] = []
-    const uvs: number[] = []
+    // Separate even and odd points
+    const evenPoints: vec3[] = []
+    const evenUVs: number[] = []
+    const oddPoints: vec3[] = []
+    const oddUVs: number[] = []
 
     for (let i = 0; i < pointCount; i++) {
       const point = points[i]!
-
-      // Convert to true 3D position for proper depth-aware interpolation in proj mode
       const pos3D = this.renderContext.get3DPosition(point.position, point.depth)
 
-      // Add 3D position (vec3)
-      positions.push(pos3D[0], pos3D[1], pos3D[2])
-
-      // Add UV (vec2) - use 3D-based normalized distances for proper perspective
       if (i % 2 === 0) {
-        // Even vertex: left side (u=0)
-        uvs.push(0.0, this.normalizedEvenUVs3D[i]!)
+        evenPoints.push(pos3D)
+        evenUVs.push(this.normalizedEvenUVs3D[i]!)
       } else {
-        // Odd vertex: right side (u=1)
-        uvs.push(1.0, this.normalizedOddUVs3D[i]!)
+        oddPoints.push(pos3D)
+        oddUVs.push(this.normalizedOddUVs3D[i]!)
       }
     }
+
+    // Apply subdivision octaves to each side independently
+    let evenResult = { positions: evenPoints, uvs: evenUVs }
+    let oddResult = { positions: oddPoints, uvs: oddUVs }
+
+    for (let oct = 0; oct < octaves; oct++) {
+      evenResult = this.subdivideSide(evenResult.positions, evenResult.uvs)
+      oddResult = this.subdivideSide(oddResult.positions, oddResult.uvs)
+    }
+
+    // Interleave subdivided points back into triangle strip order
+    const positions: number[] = []
+    const uvs: number[] = []
+
+    const maxLength = Math.max(evenResult.positions.length, oddResult.positions.length)
+    for (let i = 0; i < maxLength; i++) {
+      if (i < evenResult.positions.length) {
+        const pos = evenResult.positions[i]!
+        positions.push(pos[0], pos[1], pos[2])
+        uvs.push(0.0, evenResult.uvs[i]!)
+      }
+
+      if (i < oddResult.positions.length) {
+        const pos = oddResult.positions[i]!
+        positions.push(pos[0], pos[1], pos[2])
+        uvs.push(1.0, oddResult.uvs[i]!)
+      }
+    }
+
+    this.vertexCount = positions.length / 3
 
     // Update buffers
     const gl = this.gl
@@ -370,7 +452,7 @@ export class TriangleStripArtworkRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.DYNAMIC_DRAW)
   }
 
-  render(time: number, targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5) {
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5, isSelected: boolean = false) {
     // Check if we need to regenerate geometry
     if (this.needsRegeneration && this.photoTexture && this.photoDimensions) {
       this.updateGeometry(this.photoDimensions)
@@ -395,7 +477,8 @@ export class TriangleStripArtworkRenderer {
       projMatrix
     )
     gl.uniform1f(this.program.uniLocs.time, time)
-    gl.uniform1f(this.program.uniLocs.u_depth, depth)
+    gl.uniform1f(this.program.uniLocs.u_depth, isSelected ? 0.0 : depth)
+    gl.uniform1f(this.program.uniLocs.u_selected, isSelected ? 1.0 : 0.0)
 
     // Bind generated texture (for now it's empty, but structure is ready)
     gl.activeTexture(gl.TEXTURE0)

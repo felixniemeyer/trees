@@ -1,6 +1,12 @@
 subdivide areas for proj rendering. for every side: for every edge: subdivide that edge. choose the new location like this: 1/3 * (avg of corners) + 1/3 * (extension of previous edge) + 1/3 (extension of next edge). if no previous edge or not last edge ignore and divide by 2 instead of 3 (or 1 if there is just one edge at all). 
 
-add a fader "roundness octaves" which specifies how many. use 0 decimal places and round for ocataves value. 
+there is a "roundness octaves" per tree (also stored in metadata) which specifies how many subdivisions we make (exponential). In the UI it should be possible to 
+- select a tree (shown at depth 0 and mixed with white 50%), 
+  - next, previous, deselect buttons
+  - clicking a tree in the artwork should also select it
+    - therefore implement an area clicked callback in the triangle strip handler
+    - if multiple report clicked at the same time (handle in forest), choose the one with the lowest depth
+- when a tree is selected there are two pads for "increase octaves" and "decrease octaves" (clamp to [0, 8])
 
 For this to work, we need to ensure that both sides have equal amount of points. 
 
@@ -14,6 +20,224 @@ we can remove all sideOffset logic
 
 for migration we swap sides if sideOffset is set and we truncate the last point if total point count is odd. 
 
+- 
+
+
+Review your answers
+
+ ● For the subdivision algorithm: when you say 'extension of previous/next edge', do you mean we
+ extrapolate the direction of those edges to influence the new point's position (like a tangent-based
+ curve)?
+   → yes, extrapolate the edge direciton. by half of the other edge. so if we have A-B-C-D and looking at 
+   B-C we take 1/3(B+C)/2 + 1/3( B+(B-A)/2 ) + 1/3( C + (C-D)/2)
+ ● For tree selection: Should clicking on a tree in the artwork also work in photo mode, or only in proj
+ mode?
+   → Only proj mode
+ ● For the dual-point insertion: Should the 'longer side' be determined by the physical distance between
+ corners on each side, or by the number of points on each side?
+   → good question. i mean the two edges from the mouse position to the existing points. and yes, i mean 
+   the corners of each side. so if we're closer to the corner of the right side, we'd subdivide the edge 
+   to the left corner
+ ● For the special dragging state with dual points: Should the second point mirror the first point's
+ movement, or should it maintain a fixed relationship to the edge it was inserted on?
+   → symmetric on the opposite side of the line that goes through (corner0 + corner1)/2 with slope 
+   90degreerotate(corner0-corner1). the line is determined when the click that creates the new two points 
+   happens.
+
+---
 
 
 
+     Phase 1: Web-Mapper Refactor
+
+     Files: web-mapper/src/areas/triangle-strip-area.ts, 
+     web-mapper/src/area-renderers/triangle-strip.ts
+
+     1. Migration: Swap sides if sideOffset exists, truncate last point if odd count
+     2. Remove sideOffset logic entirely
+     3. Dual-point insertion on first/last edges: insert 2 symmetric points, determine longer edge to 
+     mouse
+     4. Dual-point dragging: reflect point across symmetry line (center=(corner0+corner1)/2, 
+     slope=90°rotate(corner0-corner1))
+     5. Add click callback: onClicked?: (area) => void, triggered when area clicked in proj mode
+
+     Phase 2: Forest Selection & Clicks
+
+     File: trees/src/forest.ts
+
+     1. Add selectedTreeIndex: number | null
+     2. Subscribe to area clicks, collect in clickedAreas[]
+     3. On render (proj mode only): select area with lowest depth from clicked
+     4. Visual feedback: render selected tree at depth=0 + 50% white mix
+     5. Methods: selectTree(), deselectTree(), selectNext/Previous(), changeSelectedOctaves()
+
+     Phase 3: Subdivision Algorithm
+
+     File: trees/src/forest.ts or new trees/src/subdivision.ts
+
+     1. Add roundnessOctaves (0-8) to area metadata
+     2. Implement subdivision:
+       - For each edge B-C: newPoint = (1/3)(B+C)/2 + (1/3)(B+(B-A)/2) + (1/3)(C+(C-D)/2)
+       - If A or D missing, divide by 2 or 1 instead of 3
+       - Repeat for both sides
+     3. Apply octaves exponentially before rendering
+     4. Don't modify original area, only render subdivided version
+
+     Phase 4: UI Controls
+
+     File: trees/src/main.ts
+
+     Add to Trees tab at y=45:
+     - Previous/Next/Deselect tree pads
+     - Increase/Decrease octaves pads (clamp 0-8)
+
+     Wire to Forest methods.
+
+---
+
+> just want to throw in that the subdivision should be implemented in tree where we generate the 
+vertex buffer data. so it get's executed when something (e.g. the area) has updated. 
+
+---
+
+And this is where we just stopped: 
+
+● Good point about subdivision in the renderer! Let me continue with the full implementation. I'll
+  work through it step by step.
+
+● Now let me continue reading the interaction handler to understand edge insertion:
+
+● Read(~/dev/graphics/trees-workspace/web-mapper/src/area-interaction-handlers/proj/triangle-strip.ts)
+  ⎿  Read 74 lines
+
+● I see that the current interaction handler only handles point dragging and endpoint addition. The
+  edge insertion logic with Shift must be somewhere else. Let me search for where Shift+click edge
+  insertion happens:
+
+● Search(pattern: "shiftHeld.*edge|edge.*insert|previewPoint", path:
+        "~/dev/graphics/trees-workspace/web-mapper/src")
+  ⎿  Found 3 files (ctrl+o to expand)
+
+● It looks like edge insertion is only implemented for photo mode. Let me check that handler:
+
+● Read(~/dev/graphics/trees-workspace/web-mapper/src/area-interaction-handlers/photo/triangle-strip.ts)
+  ⎿  Read 100 lines
+
+● Good! Let me find the insertPointsAtEdge method:
+
+● Search(pattern: "insertPointsAtEdge", path:
+        "~/dev/graphics/trees-workspace/web-mapper/src/area-interaction-handlers/photo/triangle-strip.ts",
+         output_mode: "content")
+  ⎿  Found 100 lines (ctrl+o to expand)
+
+● Let me read more of the insertion logic:
+
+● Read(~/dev/graphics/trees-workspace/web-mapper/src/area-interaction-handlers/photo/triangle-strip.ts)
+  ⎿  Read 60 lines
+
+● Perfect! I can see the current implementation uses sideOffset which we're removing. Now I need to
+  refactor this to:
+  1. For endpoint edges (first/last): always insert TWO points symmetrically
+  2. Remove sideOffset logic
+  3. Add symmetric dragging
+
+  Let me update the insertPointsAtEdge method:
+
+● Update(~/dev/graphics/trees-workspace/web-mapper/src/area-interaction-handlers/photo/triangle-strip.ts)
+  ⎿  Updated ../web-mapper/src/area-interaction-handlers/photo/triangle-strip.ts with 46 additions an
+      34 removals
+       334        const pointCount = this.area.points.length
+       335    
+       336        if (this.hoveredEdgeType === 'endpoint') {
+       337 -        // Endpoint edge: insert single point
+       338 -        const insertIndex = (eli === 0) ? 0 : pointCount
+       339 -        const newPoint = new Point(vec2.clone(this.area.previewPoints[0]!.pos), 0)
+       340 -        this.area.addPoint(newPoint, insertIndex)
+       337 +        // Endpoint edge: ALWAYS insert TWO points (one on each side)
+       338 +        // Determine which corner we're at
+       339 +        const isFirstEdge = eli === 0
+       340 +        const corner0 = this.area.points[0]!.photoPos
+       341 +        const corner1 = this.area.points[pointCount - 1]!.photoPos
+       342    
+       343 -        // Start dragging the inserted point
+       344 -        this.draggedPoint = newPoint
+       345 -        this.draggedPointIndex = insertIndex
+       346 -      } else {
+       347 -        // Side edge: dual insertion
+       348 -        const sideOffset = this.area.sideOffset
+       349 -        const oeli = eli + ((eli % 2) * 2 - 1) * (sideOffset * 2 - 1)
+       343 +        // Calculate symmetry line: center and perpendicular slope
+       344 +        const center = vec2.create()
+       345 +        vec2.lerp(center, corner0, corner1, 0.5)
+       346    
+       347 -        // Validate oeli bounds - if invalid, don't insert anything
+       348 -        if (oeli < 0 || oeli > pointCount - 3) {
+       349 -          return undefined
+       350 -        }
+       347 +        const cornerDiff = vec2.sub(vec2.create(), corner1, corner0)
+       348 +        // Rotate 90 degrees: (x, y) -> (-y, x)
+       349 +        const symmetrySlope = vec2.fromValues(-cornerDiff[1], cornerDiff[0])
+       350    
+       351 -        const insertIndex = Math.min(eli, oeli) + 2
+       351 +        // First point at mouse position
+       352 +        const point1Pos = vec2.clone(this.area.previewPoints[0]!.pos)
+       353 +        const point1 = new Point(point1Pos, 0)
+       354    
+       355 -        // previewPoints[0] is from eli edge, previewPoints[1] is from oeli edge
+       356 -        // Insert in index order
+       357 -        const newPoints = this.area.previewPoints.map(previewPoint =>
+       358 -          new Point(vec2.clone(previewPoint.pos), 0)
+       359 -        )
+       355 +        // Second point: reflect across symmetry line
+       356 +        const point2Pos = this.reflectAcrossLine(point1Pos, center, symmetrySlope)
+       357 +        const point2 = new Point(point2Pos, 0)
+       358    
+       359 -        if (eli < oeli) {
+       360 -          // eli edge is first, insert [eli_point, oeli_point]
+       361 -          this.area.addPoint(newPoints[0]!, insertIndex)
+       362 -          this.area.addPoint(newPoints[1]!, insertIndex + 1)
+       363 -          // Drag the point from eli edge
+       364 -          this.draggedPoint = newPoints[0]!
+       365 -          this.draggedPointIndex = insertIndex
+       359 +        // Determine which side gets which point based on distance to corners
+       360 +        const dist1ToCorner0 = vec2.distance(point1Pos, corner0)
+       361 +        const dist1ToCorner1 = vec2.distance(point1Pos, corner1)
+       362 +  
+       363 +        const insertIndex = isFirstEdge ? 0 : pointCount
+       364 +  
+       365 +        if (dist1ToCorner0 < dist1ToCorner1) {
+       366 +          // point1 is closer to corner0, so it's on the same side as corner0
+       367 +          this.area.addPoint(point1, insertIndex)
+       368 +          this.area.addPoint(point2, insertIndex + (isFirstEdge ? 1 : 0))
+       369          } else {
+       370 -          // oeli edge is first, insert [oeli_point, eli_point]
+       371 -          this.area.addPoint(newPoints[1]!, insertIndex)
+       372 -          this.area.addPoint(newPoints[0]!, insertIndex + 1)
+       373 -          // Drag the point from eli edge (now at insertIndex + 1)
+       374 -          this.draggedPoint = newPoints[0]!
+       375 -          this.draggedPointIndex = insertIndex + 1
+       370 +          // point1 is closer to corner1, so it's on the opposite side
+       371 +          this.area.addPoint(point2, insertIndex)
+       372 +          this.area.addPoint(point1, insertIndex + (isFirstEdge ? 1 : 0))
+       373          }
+       374 +  
+       375 +        // Set up dual-point dragging
+       376 +        this.area.dualPointDragging = {
+       377 +          point1,
+       378 +          point2,
+       379 +          symmetryCenter: center,
+       380 +          symmetrySlope
+       381 +        }
+       382 +  
+       383 +        // Start dragging point1 (the one at mouse position)
+       384 +        this.draggedPoint = point1
+       385 +        this.draggedPointIndex = isFirstEdge ? (dist1ToCorner0 < dist1ToCorner1 ? 0 : 
+           + 1) :
+       386 +                                                (dist1ToCorner0 < dist1ToCorner1 ? 
+           + pointCount : pointCount + 1)
+       387 +      } else {
+       388 +        // Side edges: not allowed anymore (endpoint edges only)
+       389 +        return undefined
+       390        }
+       391    
+       392        // Initialize drag state

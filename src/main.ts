@@ -70,6 +70,37 @@ const randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   }
 })
 
+// Tree selection controls
+const previousTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('previous tree', 0, 45, 20, 15, '#5a8')
+), () => {
+  if (forest) forest.selectPreviousTree()
+})
+
+const nextTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('next tree', 20, 45, 20, 15, '#5a8')
+), () => {
+  if (forest) forest.selectNextTree()
+})
+
+const deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('deselect tree', 40, 45, 20, 15, '#858')
+), () => {
+  if (forest) forest.deselectTree()
+})
+
+const increaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('increase octaves', 60, 45, 30, 15, '#4a5')
+), () => {
+  if (forest) forest.increaseOctaves()
+})
+
+const decreaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('decrease octaves', 90, 45, 30, 15, '#5a4')
+), () => {
+  if (forest) forest.decreaseOctaves()
+})
+
 const shadowSizeFader = new Controls.Fader.Receiver(
   new Controls.Fader.Spec(
     new Controls.Base.Args('shadow size', 0, 15, 20, 30, '#58a'),
@@ -524,6 +555,11 @@ function setupControlPanel() {
     'add tree': addTreePad,
     'remove tree': removeTreePad,
     'randomize depths': randomizeDepthsPad,
+    'previous tree': previousTreePad,
+    'next tree': nextTreePad,
+    'deselect tree': deselectTreePad,
+    'increase octaves': increaseOctavesPad,
+    'decrease octaves': decreaseOctavesPad,
     'shadow size': shadowSizeFader,
     'shadow alpha': shadowAlphaFader,
     'shadow amount': shadowAmountFader,
