@@ -130,6 +130,14 @@ export class TriangleStripArtworkRenderer {
     this.resolution = vec2.clone(res)
   }
 
+  update() {
+    // Check if we need to regenerate geometry
+    if (this.needsRegeneration && this.photoTexture && this.photoDimensions) {
+      this.updateGeometry(this.photoDimensions)
+      this.needsRegeneration = false
+    }
+  }
+
   private updateGeometry(dimensions: vec2) {
     this.calculateDistances(dimensions)
     this.updateTexture()
@@ -450,21 +458,12 @@ export class TriangleStripArtworkRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.DYNAMIC_DRAW)
   }
 
-  render(time: number, targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5, isSelected: boolean = false) {
-    // Check if we need to regenerate geometry
-    if (this.needsRegeneration && this.photoTexture && this.photoDimensions) {
-      this.updateGeometry(this.photoDimensions)
-      this.needsRegeneration = false
-    }
-
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5, isSelected: boolean = false, debugMode: number = 0) {
     if (this.vertexCount < 2 || !this.photoTexture) return
 
     const gl = this.gl
 
-    // Bind target framebuffer and set viewport
-    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFramebuffer)
-    gl.viewport(0, 0, this.resolution[0], this.resolution[1])
-
+    // Framebuffer and viewport are set by Forest
     this.program.use()
 
     // Set uniforms
@@ -477,6 +476,7 @@ export class TriangleStripArtworkRenderer {
     gl.uniform1f(this.program.uniLocs.time, time)
     gl.uniform1f(this.program.uniLocs.u_depth, isSelected ? 0.0 : depth)
     gl.uniform1f(this.program.uniLocs.u_selected, isSelected ? 1.0 : 0.0)
+    gl.uniform1i(this.program.uniLocs.u_debugMode, debugMode)
 
     // Bind generated texture (for now it's empty, but structure is ready)
     gl.activeTexture(gl.TEXTURE0)

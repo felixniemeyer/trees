@@ -14,6 +14,7 @@ export class Forest {
   private treeSpeeds: number[]
   private treeDepths: number[]
   private resolution: [number, number]
+  private renderContext: ProjRenderContext
 
   // Render targets
   private treesTexture: WebGLTexture
@@ -53,6 +54,7 @@ export class Forest {
     this.gl = gl
     this.areas = areas
     this.resolution = resolution
+    this.renderContext = renderContext
 
     // Create renderers for each area
     this.renderers = areas.map(area =>
@@ -118,6 +120,33 @@ export class Forest {
 
     // Create fullscreen quad
     this.quadVAO = this.createFullscreenQuad()
+  }
+
+  setResolution(width: number, height: number) {
+    // Only recreate if resolution actually changed
+    if (width === this.resolution[0] && height === this.resolution[1]) {
+      console.log(`Forest: Resolution unchanged (${width}x${height})`)
+      return
+    }
+
+    console.log(`Forest: Recreating framebuffers ${this.resolution[0]}x${this.resolution[1]} → ${width}x${height}`)
+    this.resolution = [width, height]
+
+    const gl = this.gl
+
+    // Delete old render targets
+    gl.deleteTexture(this.treesTexture)
+    gl.deleteRenderbuffer(this.treesDepthBuffer)
+    gl.deleteFramebuffer(this.treesFramebuffer)
+    gl.deleteTexture(this.shadowMap)
+    gl.deleteFramebuffer(this.shadowFramebuffer)
+
+    // Recreate render targets with new resolution
+    this.treesTexture = this.createTexture()
+    this.treesDepthBuffer = this.createDepthBuffer()
+    this.treesFramebuffer = this.createFramebufferWithDepth(this.treesTexture, this.treesDepthBuffer)
+    this.shadowMap = this.createShadowTexture()
+    this.shadowFramebuffer = this.createFramebuffer(this.shadowMap)
   }
 
   private createTexture(): WebGLTexture {
@@ -253,7 +282,7 @@ export class Forest {
     // No explicit update needed here
   }
 
-  render(time: number, targetFramebuffer: WebGLFramebuffer | null, audioEnabled: boolean, audioData: Float32Array) {
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null, audioEnabled: boolean, audioData: Float32Array, debugMode: number = 0) {
     const gl = this.gl
 
     // Calculate delta time
@@ -264,6 +293,11 @@ export class Forest {
     // Process audio if enabled
     if (audioEnabled && audioData.length > 0) {
       this.processAudio(audioData, deltaTime)
+    }
+
+    // Update phase: Update all renderers (they may update their flow textures if dirty)
+    for (let i = 0; i < this.renderers.length; i++) {
+      this.renderers[i]!.update()
     }
 
     // Step 1: Render all trees to trees texture with depth in alpha
@@ -277,13 +311,14 @@ export class Forest {
     gl.enable(gl.DEPTH_TEST)
     gl.depthFunc(gl.LESS)
 
+    // Render phase: Render all trees to our framebuffer
     for (let i = 0; i < this.renderers.length; i++) {
       // Base time animation
       const baseTime = time * this.treeSpeeds[i]! * 0.1
       // Add audio offset if audio is enabled
       const totalTime = baseTime + (audioEnabled ? this.audioOffsets[i]! : 0)
       const isSelected = this.selectedTreeIndex === i
-      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, isSelected)
+      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, isSelected, debugMode)
     }
 
     gl.disable(gl.DEPTH_TEST)

@@ -16,7 +16,7 @@ if (!canvas) {
 // Global state
 let mapper: WebMapper | null = null
 let isEditMode = true
-let debugMode = false
+let debugMode = 0
 let startTime = Date.now()
 let trees: TriangleStripArea[] = []
 let projectSelection: ProjectSelection | null = null
@@ -227,8 +227,8 @@ const uploadPhotoPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   input.click()
 })
 
-const photoModePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('photo mode', 40, 0, 20, 15, '#48a')
+const modeTogglePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('toggle photo/proj', 40, 0, 20, 15, '#48a')
 ), async () => {
   if (!mapper) return
   const currentPhotoMode = mapper.getPhotoMode()
@@ -245,14 +245,16 @@ const photoModePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   }
 })
 
-const debugModeSwitch = new Controls.Switch.Receiver(
-  new Controls.Switch.Spec(
+const debugModeSelect = new Controls.Selector.Receiver(
+  new Controls.Selector.Spec(
     new Controls.Base.Args('debug mode', 80, 0, 20, 15, '#844'),
-    false
+    ['Off', 'Vertex ID', 'Every Vertex'],
+    0
   ),
-  () => {
-    debugMode = debugModeSwitch.on
-    console.log(`Debug mode: ${debugMode ? 'ON' : 'OFF'}`)
+  (value) => {
+    debugMode = value
+    const modeNames = ['Off', 'Vertex ID', 'Every Vertex']
+    console.log(`Debug mode: ${modeNames[value]}`)
   }
 )
 
@@ -461,12 +463,23 @@ async function initializeProject(projectId: string) {
   }
 
   // Create Forest instance - it will handle renderer creation and metadata management
-  forest = new Forest(mapper!.gl, trees, mapper!.projContext, mapper!, [canvas.width, canvas.height])
+  forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
+
+  // Set up resize observer to handle canvas dimension changes
+  const resizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const width = entry.contentRect.width
+      const height = entry.contentRect.height
+      console.log(`Canvas resized: ${width}x${height}`)
+      mapper.setResolution(width, height)
+      forest.setResolution(width, height)
+    }
+  })
+  resizeObserver.observe(canvas)
 
   // Set render callback
   startTime = Date.now()
   mapper.setRenderCallback((deltaTime) => {
-    if (!mapper || !forest) return
     const gl = mapper.gl
 
     // Joystick-based point movement
@@ -501,14 +514,11 @@ async function initializeProject(projectId: string) {
       // Normal mode: render with Forest (handles all trees with shadows)
       const time = (Date.now() - startTime) / 1000 // seconds
       forest.update()
-      forest.render(time, null, audioEnabled, audioDataArray || new Float32Array(0))
+      forest.render(time, null, audioEnabled, audioDataArray || new Float32Array(0), debugMode)
     }
 
     // WebMapper automatically renders areas/handles in edit mode
   })
-
-  // Sync control states with mapper's current state
-  debugModeSwitch.on = debugMode
 
   console.log('Trees app initialized')
   console.log(`Loaded ${trees.length} tree(s) for project ${projectId}`)
@@ -563,15 +573,6 @@ async function exitProject() {
   showProjectSelection()
 }
 
-// Update artwork resolution on window resize
-window.addEventListener('resize', () => {
-  // Recreate Forest with new resolution
-  if (forest && mapper) {
-    forest.dispose()
-    forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
-  }
-})
-
 // ========== AV-CONTROLS SETUP ==========
 // Set up control panel with tabs
 function setupControlPanel() {
@@ -603,8 +604,8 @@ function setupControlPanel() {
     'reset mapping points': resetPositionsButton,
     'exit project': exitProjectPad,
     'upload photo': uploadPhotoPad,
-    'photo mode': photoModePad,
-    'debug mode': debugModeSwitch,
+    'photo mode': modeTogglePad,
+    'debug mode': debugModeSelect,
     'joystick': joystickControl,
     'snap radius': snapRadiusFader,
     'snapping': snappingToggle,

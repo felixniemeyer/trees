@@ -1,4 +1,5 @@
-- weniger speed bei audio reactive 
+- D: weniger speed bei audio reactive 
+
 - resize handling seems to lag 1 resize event behind (especially when i3+e / i3+f)
 
 - H(no keystrokes): bring back keystrokes for photo mode, edit mode
