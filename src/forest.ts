@@ -40,9 +40,6 @@ export class Forest {
   private audioReactivityScale: number = 0.5
   private lastFrameTime: number = performance.now()
 
-  // Tree selection
-  private selectedTreeIndex: number | null = null
-
   constructor(
     gl: WebGL2RenderingContext,
     areas: TriangleStripArea[],
@@ -92,11 +89,6 @@ export class Forest {
       if (area.metadata.frequencyIndex === undefined) {
         area.metadata.frequencyIndex = i
         area.save()
-      }
-
-      // Set up click handler for tree selection
-      area.onClicked = (clickedArea: TriangleStripArea) => {
-        this.handleTreeClick(clickedArea)
       }
     }
 
@@ -315,8 +307,7 @@ export class Forest {
       const baseTime = time * this.treeSpeeds[i]! * 0.1
       // Add audio offset if audio is enabled
       const totalTime = baseTime + (audioEnabled ? this.audioOffsets[i]! : 0)
-      const isSelected = this.selectedTreeIndex === i
-      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, isSelected, debugMode)
+      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, debugMode)
     }
 
     gl.disable(gl.DEPTH_TEST)
@@ -476,57 +467,56 @@ export class Forest {
   }
 
   // Tree selection methods
-  private handleTreeClick(clickedArea: TriangleStripArea) {
-    // Find index of clicked area
-    const clickedIndex = this.areas.indexOf(clickedArea)
-
-    if (clickedIndex === -1) return
-
-    // If clicking the already-selected tree, deselect it
-    if (this.selectedTreeIndex === clickedIndex) {
-      this.selectedTreeIndex = null
-      console.log('Tree deselected')
-    } else {
-      this.selectedTreeIndex = clickedIndex
-      console.log(`Tree ${clickedIndex} selected (depth: ${this.treeDepths[clickedIndex]!.toFixed(2)})`)
-    }
-  }
-
   selectNextTree() {
     if (this.areas.length === 0) return
 
-    if (this.selectedTreeIndex === null) {
-      this.selectedTreeIndex = 0
-    } else {
-      this.selectedTreeIndex = (this.selectedTreeIndex + 1) % this.areas.length
+    // Find currently selected tree
+    const currentIndex = this.areas.findIndex(area => area.isSelected())
+
+    // Deselect current
+    if (currentIndex !== -1) {
+      this.areas[currentIndex]!.setSelected(false)
     }
-    console.log(`Tree ${this.selectedTreeIndex} selected`)
+
+    // Select next (wrap around)
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % this.areas.length
+    this.areas[nextIndex]!.setSelected(true)
+    console.log(`Tree ${nextIndex} selected`)
   }
 
   selectPreviousTree() {
     if (this.areas.length === 0) return
 
-    if (this.selectedTreeIndex === null) {
-      this.selectedTreeIndex = this.areas.length - 1
-    } else {
-      this.selectedTreeIndex = (this.selectedTreeIndex - 1 + this.areas.length) % this.areas.length
+    // Find currently selected tree
+    const currentIndex = this.areas.findIndex(area => area.isSelected())
+
+    // Deselect current
+    if (currentIndex !== -1) {
+      this.areas[currentIndex]!.setSelected(false)
     }
-    console.log(`Tree ${this.selectedTreeIndex} selected`)
+
+    // Select previous (wrap around)
+    const prevIndex = currentIndex === -1 ? this.areas.length - 1 : (currentIndex - 1 + this.areas.length) % this.areas.length
+    this.areas[prevIndex]!.setSelected(true)
+    console.log(`Tree ${prevIndex} selected`)
   }
 
   deselectTree() {
-    this.selectedTreeIndex = null
+    for (const area of this.areas) {
+      area.setSelected(false)
+    }
     console.log('Tree deselected')
   }
 
-  getSelectedTreeIndex(): number | null {
-    return this.selectedTreeIndex
+  getSelectedTreeIndex(): number {
+    return this.areas.findIndex(area => area.isSelected())
   }
 
   increaseOctaves() {
-    if (this.selectedTreeIndex === null) return
+    const selectedIndex = this.getSelectedTreeIndex()
+    if (selectedIndex === -1) return
 
-    const area = this.areas[this.selectedTreeIndex]!
+    const area = this.areas[selectedIndex]!
     const currentOctaves = area.metadata!.octaves || 0
     const newOctaves = Math.min(8, currentOctaves + 1)
 
@@ -534,13 +524,14 @@ export class Forest {
     area.save()
     area.broadcastUpdate() // Trigger re-render
 
-    console.log(`Tree ${this.selectedTreeIndex} octaves: ${newOctaves}`)
+    console.log(`Tree ${selectedIndex} octaves: ${newOctaves}`)
   }
 
   decreaseOctaves() {
-    if (this.selectedTreeIndex === null) return
+    const selectedIndex = this.getSelectedTreeIndex()
+    if (selectedIndex === -1) return
 
-    const area = this.areas[this.selectedTreeIndex]!
+    const area = this.areas[selectedIndex]!
     const currentOctaves = area.metadata!.octaves || 0
     const newOctaves = Math.max(0, currentOctaves - 1)
 
@@ -548,7 +539,7 @@ export class Forest {
     area.save()
     area.broadcastUpdate() // Trigger re-render
 
-    console.log(`Tree ${this.selectedTreeIndex} octaves: ${newOctaves}`)
+    console.log(`Tree ${selectedIndex} octaves: ${newOctaves}`)
   }
 
   dispose() {
