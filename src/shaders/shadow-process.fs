@@ -12,7 +12,7 @@ uniform vec2 u_randomSeed;
 uniform vec2 u_aspect;
 
 float random(vec2 co) {
-    return fract(sin(dot(co + u_randomSeed, vec2(12.9898, 78.233))) * 43758.5453);
+    return fract(sin(dot(co, u_randomSeed)) * 43758.5453);
 }
 
 void main() {

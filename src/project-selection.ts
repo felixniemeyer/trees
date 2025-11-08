@@ -49,6 +49,9 @@ export class ProjectSelection {
     // Setup event listeners
     if (this.inputElement) {
       this.inputElement.addEventListener('keydown', (e) => {
+        // Prevent key events from propagating to global keyboard handlers
+        e.stopPropagation()
+
         if (e.key === 'Enter') {
           this.handleCreateProject()
         }

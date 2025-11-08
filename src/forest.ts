@@ -14,7 +14,6 @@ export class Forest {
   private treeSpeeds: number[]
   private treeDepths: number[]
   private resolution: [number, number]
-  private renderContext: ProjRenderContext
 
   // Render targets
   private treesTexture: WebGLTexture
@@ -54,7 +53,6 @@ export class Forest {
     this.gl = gl
     this.areas = areas
     this.resolution = resolution
-    this.renderContext = renderContext
 
     // Create renderers for each area
     this.renderers = areas.map(area =>
