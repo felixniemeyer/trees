@@ -6,6 +6,7 @@ import shadowProcessVs from './shaders/shadow-process.vs'
 import shadowProcessFs from './shaders/shadow-process.fs'
 import compositeVs from './shaders/composite.vs'
 import compositeFs from './shaders/composite.fs'
+import { Controls } from 'av-controls'
 
 export class Forest {
   private gl: WebGL2RenderingContext
@@ -29,16 +30,60 @@ export class Forest {
   // Fullscreen quad
   private quadVAO: WebGLVertexArrayObject
 
-  // Shadow parameters
-  private shadowSize: number = 0.25
-  private shadowAlpha: number = 0.02
-  private shadowAmount = 1.5
-
   // Audio reactivity
   private audioOffsets: number[] = []
   private smoothedEnergies: number[] = []
-  private audioReactivityScale: number = 0.5
   private lastFrameTime: number = performance.now()
+
+  // Controls - initialized inline
+  private shadowSizeFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('shadow size', 0, 15, 20, 30, '#58a'),
+      0.25, 0, 1, 2
+    )
+  )
+
+  private shadowAlphaFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('shadow alpha', 20, 15, 20, 30, '#58a'),
+      0.02, 0, 0.1, 3
+    )
+  )
+
+  private shadowAmountFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('shadow amount', 40, 15, 20, 30, '#58a'),
+      1.5, 0, 3, 2
+    )
+  )
+
+  private audioScaleFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('audio scale', 60, 15, 20, 30, '#a85'),
+      0.5, 0, 1, 2
+    )
+  )
+
+  private audioSmoothingFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('audio smoothing', 80, 15, 20, 30, '#a85'),
+      1.0, 0, 1, 2
+    )
+  )
+
+  // Pads and toggles - initialized in getControls() because they need callbacks
+  private audioToggle!: Controls.Switch.Receiver
+  private addTreePad!: Controls.Pad.Receiver
+  private removeTreePad!: Controls.Pad.Receiver
+  private moveTreeUpPad!: Controls.Pad.Receiver
+  private moveTreeDownPad!: Controls.Pad.Receiver
+  private randomizeDepthsPad!: Controls.Pad.Receiver
+  private previousTreePad!: Controls.Pad.Receiver
+  private nextTreePad!: Controls.Pad.Receiver
+  private deselectTreePad!: Controls.Pad.Receiver
+  private increaseOctavesPad!: Controls.Pad.Receiver
+  private decreaseOctavesPad!: Controls.Pad.Receiver
+  private shuffleFrequenciesPad!: Controls.Pad.Receiver
 
   constructor(
     gl: WebGL2RenderingContext,
@@ -326,8 +371,8 @@ export class Forest {
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.treesTexture)
     gl.uniform1i(this.shadowProcessProgram.uniLocs.u_treesTexture, 0)
-    gl.uniform1f(this.shadowProcessProgram.uniLocs.u_shadowSize, this.shadowSize)
-    gl.uniform1f(this.shadowProcessProgram.uniLocs.u_shadowAlpha, this.shadowAlpha)
+    gl.uniform1f(this.shadowProcessProgram.uniLocs.u_shadowSize, this.shadowSizeFader.value)
+    gl.uniform1f(this.shadowProcessProgram.uniLocs.u_shadowAlpha, this.shadowAlphaFader.value)
 
     // Random seed for this frame
     const randomSeed = [Math.random() * 100, Math.random() * 100]
@@ -357,7 +402,7 @@ export class Forest {
     gl.bindTexture(gl.TEXTURE_2D, this.treesTexture)
     gl.uniform1i(this.compositeProgram.uniLocs.u_treesTexture, 0)
 
-    gl.uniform1f(this.compositeProgram.uniLocs.u_shadowAmount, this.shadowAmount)
+    gl.uniform1f(this.compositeProgram.uniLocs.u_shadowAmount, this.shadowAmountFader.value)
 
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.shadowMap)
@@ -406,11 +451,12 @@ export class Forest {
       const normalizedEnergy = Math.max(0, Math.min(1, (avgEnergyDb + 100) / 100))
 
       // Smooth energy
-      const smoothFactor = Math.min(deltaTime * 3, 1)
+      // audioSmoothingAmount: 0 = instant, 1 = smooth
+      const smoothFactor = Math.min(1, deltaTime * 3 * (1 - this.audioSmoothingFader.value))
       this.smoothedEnergies[i] = this.smoothedEnergies[i]! + (normalizedEnergy - this.smoothedEnergies[i]!) * smoothFactor
 
       // Accumulate audio offset (sensitivity can be adjusted)
-      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * deltaTime * this.audioReactivityScale
+      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * deltaTime * this.audioScaleFader.value
     }
   }
 
@@ -447,23 +493,6 @@ export class Forest {
     // gl.clearColor(0, 0, 0, 0)
     // gl.clear(gl.COLOR_BUFFER_BIT)
     // gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-  }
-
-  // Public setters for shadow parameters (for av-controls)
-  setShadowSize(value: number) {
-    this.shadowSize = value
-  }
-
-  setShadowAlpha(value: number) {
-    this.shadowAlpha = value
-  }
-
-  setShadowAmount(value: number) {
-    this.shadowAmount = value
-  }
-
-  setAudioReactivityScale(value: number) {
-    this.audioReactivityScale = value
   }
 
   // Tree selection methods
@@ -540,6 +569,132 @@ export class Forest {
     area.broadcastUpdate() // Trigger re-render
 
     console.log(`Tree ${selectedIndex} octaves: ${newOctaves}`)
+  }
+
+  moveSelectedTreeUp() {
+    const selectedIndex = this.getSelectedTreeIndex()
+    if (selectedIndex === -1 || selectedIndex === 0) return // Already at top
+
+    const currentArea = this.areas[selectedIndex]!
+    const previousArea = this.areas[selectedIndex - 1]!
+
+    // Swap depth values
+    const tempDepth = this.treeDepths[selectedIndex]!
+    this.treeDepths[selectedIndex] = this.treeDepths[selectedIndex - 1]!
+    this.treeDepths[selectedIndex - 1] = tempDepth
+
+    // Update metadata
+    currentArea.metadata!.depth = this.treeDepths[selectedIndex]
+    previousArea.metadata!.depth = this.treeDepths[selectedIndex - 1]
+
+    // Save both areas
+    currentArea.save()
+    previousArea.save()
+
+    console.log(`Moved tree ${selectedIndex} up (depth: ${this.treeDepths[selectedIndex]})`)
+  }
+
+  moveSelectedTreeDown() {
+    const selectedIndex = this.getSelectedTreeIndex()
+    if (selectedIndex === -1 || selectedIndex === this.areas.length - 1) return // Already at bottom
+
+    const currentArea = this.areas[selectedIndex]!
+    const nextArea = this.areas[selectedIndex + 1]!
+
+    // Swap depth values
+    const tempDepth = this.treeDepths[selectedIndex]!
+    this.treeDepths[selectedIndex] = this.treeDepths[selectedIndex + 1]!
+    this.treeDepths[selectedIndex + 1] = tempDepth
+
+    // Update metadata
+    currentArea.metadata!.depth = this.treeDepths[selectedIndex]
+    nextArea.metadata!.depth = this.treeDepths[selectedIndex + 1]
+
+    // Save both areas
+    currentArea.save()
+    nextArea.save()
+
+    console.log(`Moved tree ${selectedIndex} down (depth: ${this.treeDepths[selectedIndex]})`)
+  }
+
+  getControls(
+    onAddTree: () => Promise<void>,
+    onRemoveTree: () => Promise<void>,
+    onToggleAudio: (value: boolean) => Promise<void>
+  ) {
+    // Pads - stored as class members
+    this.addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('add tree', 60, 0, 20, 15, '#4a8')
+    ), onAddTree)
+
+    this.removeTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('remove tree', 80, 0, 20, 15, '#a48')
+    ), onRemoveTree)
+
+    this.moveTreeUpPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('move up', 0, 60, 20, 15, '#6a8')
+    ), () => this.moveSelectedTreeUp())
+
+    this.moveTreeDownPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('move down', 0, 75, 20, 15, '#6a8')
+    ), () => this.moveSelectedTreeDown())
+
+    this.randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('randomize depths', 0, 0, 20, 15, '#8a4')
+    ), () => this.randomizeDepths())
+
+    this.previousTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('previous tree', 0, 45, 20, 15, '#5a8')
+    ), () => this.selectPreviousTree())
+
+    this.nextTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('next tree', 20, 45, 20, 15, '#5a8')
+    ), () => this.selectNextTree())
+
+    this.deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('deselect tree', 40, 45, 20, 15, '#858')
+    ), () => this.deselectTree())
+
+    this.increaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('increase octaves', 60, 45, 20, 15, '#4a5')
+    ), () => this.increaseOctaves())
+
+    this.decreaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('decrease octaves', 80, 45, 20, 15, '#5a4')
+    ), () => this.decreaseOctaves())
+
+    this.shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('shuffle frequencies', 40, 0, 20, 15, '#a58')
+    ), () => this.shuffleFrequencies())
+
+    // Toggle (faders are initialized inline at class level)
+    this.audioToggle = new Controls.Switch.Receiver(
+      new Controls.Switch.Spec(
+        new Controls.Base.Args('audio reactivity', 20, 0, 20, 15, '#a85'),
+        false
+      ),
+      onToggleAudio
+    )
+
+    return {
+      'add tree': this.addTreePad,
+      'remove tree': this.removeTreePad,
+      'move up': this.moveTreeUpPad,
+      'move down': this.moveTreeDownPad,
+      'randomize depths': this.randomizeDepthsPad,
+      'previous tree': this.previousTreePad,
+      'next tree': this.nextTreePad,
+      'deselect tree': this.deselectTreePad,
+      'increase octaves': this.increaseOctavesPad,
+      'decrease octaves': this.decreaseOctavesPad,
+      'shadow size': this.shadowSizeFader,
+      'shadow alpha': this.shadowAlphaFader,
+      'shadow amount': this.shadowAmountFader,
+      'audio scale': this.audioScaleFader,
+      'audio smoothing': this.audioSmoothingFader,
+      'audio reactivity': this.audioToggle,
+      'shuffle frequencies': this.shuffleFrequenciesPad,
+    }
   }
 
   dispose() {

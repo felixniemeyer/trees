@@ -1,3 +1,10 @@
+- add q => exit project, a audioreactive toggle
+
+- controls for depth arrangement
+- control for audio smoothing
+
+- white noise analogue to black noise
+
 - D: weniger speed bei audio reactive 
 
 - resize handling seems to lag 1 resize event behind (especially when i3+e / i3+f)

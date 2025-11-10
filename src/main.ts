@@ -222,114 +222,6 @@ class Artwork {
 
 // ========== AV-CONTROLS ==========
 // Trees Tab Controls
-const addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('add tree', 60, 0, 20, 15, '#4a8')
-), async () => {
-  await artwork?.addTree()
-})
-
-const removeTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('remove tree', 80, 0, 20, 15, '#a48')
-), async () => {
-  await artwork?.removeTree()
-})
-
-const randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('randomize depths', 0, 0, 20, 15, '#8a4')
-), () => {
-  artwork?.forest.randomizeDepths()
-})
-
-// Tree selection controls
-const previousTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('previous tree', 0, 45, 20, 15, '#5a8')
-), () => {
-  artwork?.forest.selectPreviousTree()
-})
-
-const nextTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('next tree', 20, 45, 20, 15, '#5a8')
-), () => {
-  artwork?.forest.selectNextTree()
-})
-
-const deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('deselect tree', 40, 45, 20, 15, '#858')
-), () => {
-  artwork?.forest.deselectTree()
-})
-
-const increaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('increase octaves', 60, 45, 20, 15, '#4a5')
-), () => {
-  artwork?.forest.increaseOctaves()
-})
-
-const decreaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('decrease octaves', 80, 45, 20, 15, '#5a4')
-), () => {
-  artwork?.forest.decreaseOctaves()
-})
-
-const shadowSizeFader = new Controls.Fader.Receiver(
-  new Controls.Fader.Spec(
-    new Controls.Base.Args('shadow size', 0, 15, 20, 30, '#58a'),
-    0.25, 0, 1, 2
-  ),
-  (value) => {
-    artwork?.forest.setShadowSize(value)
-  }
-)
-
-const shadowAlphaFader = new Controls.Fader.Receiver(
-  new Controls.Fader.Spec(
-    new Controls.Base.Args('shadow alpha', 20, 15, 20, 30, '#58a'),
-    0.02, 0, 0.1, 3
-  ),
-  (value) => {
-    artwork?.forest.setShadowAlpha(value)
-  }
-)
-
-const shadowAmountFader = new Controls.Fader.Receiver(
-  new Controls.Fader.Spec(
-    new Controls.Base.Args('shadow amount', 40, 15, 20, 30, '#58a'),
-    1.5, 0, 3, 2
-  ),
-  (value) => {
-    artwork?.forest.setShadowAmount(value)
-  }
-)
-
-const audioScaleFader = new Controls.Fader.Receiver(
-  new Controls.Fader.Spec(
-    new Controls.Base.Args('audio scale', 60, 15, 20, 30, '#a85'),
-    0.5, 0, 1, 2
-  ),
-  (value) => {
-    artwork?.forest.setAudioReactivityScale(value)
-  }
-)
-
-const audioToggle = new Controls.Switch.Receiver(
-  new Controls.Switch.Spec(
-    new Controls.Base.Args('audio reactivity', 20, 0, 20, 15, '#a85'),
-    false
-  ),
-  async () => {
-    if (artwork) {
-      const enabled = await artwork.toggleAudioReactivity()
-      audioToggle.on = enabled
-    }
-  }
-)
-
-const shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-  new Controls.Base.Args('shuffle frequencies', 40, 0, 20, 15, '#a58')
-), () => {
-  artwork?.forest.shuffleFrequencies()
-})
-
 // Mapping Tab Controls (from regenbogenanglerfisch)
 const toggleUIControl = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   new Controls.Base.Args('toggle edit mode', 20, 0, 20, 15, '#888')
@@ -565,6 +457,9 @@ async function initializeProject(projectId: string) {
   artwork.setupResizeObserver()
   artwork.setupRenderCallback(joystickControl, joystickSensitivityFader)
 
+  // Set up control panel now that artwork is initialized
+  setupControlPanel()
+
   console.log('Trees app initialized')
   console.log(`Loaded ${trees.length} tree(s) for project ${projectId}`)
 }
@@ -616,25 +511,16 @@ async function exitProject() {
 // ========== AV-CONTROLS SETUP ==========
 // Set up control panel with tabs
 function setupControlPanel() {
-  // Trees Tab
+  // Trees Tab - controls provided by Forest
+  const treesControls = artwork!.forest.getControls(
+    async () => await artwork!.addTree(),
+    async () => await artwork!.removeTree(),
+    async () => { await artwork!.toggleAudioReactivity() }
+  )
+
   const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
     new Controls.Base.Args('Trees', 0, 0, 100, 100, '#333')
-  ), {
-    'add tree': addTreePad,
-    'remove tree': removeTreePad,
-    'randomize depths': randomizeDepthsPad,
-    'previous tree': previousTreePad,
-    'next tree': nextTreePad,
-    'deselect tree': deselectTreePad,
-    'increase octaves': increaseOctavesPad,
-    'decrease octaves': decreaseOctavesPad,
-    'shadow size': shadowSizeFader,
-    'shadow alpha': shadowAlphaFader,
-    'shadow amount': shadowAmountFader,
-    'audio scale': audioScaleFader,
-    'audio reactivity': audioToggle,
-    'shuffle frequencies': shuffleFrequenciesPad,
-  })
+  ), treesControls)
 
   // Mapping Tab
   const mappingTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
@@ -687,9 +573,6 @@ function setupControlPanel() {
   }
 }
 
-// Initialize controls after project is loaded
-setupControlPanel()
-
 // Check for last used project or show selection
 const lastProjectId = storage.getLastUsedProject()
 if (lastProjectId) {
@@ -739,6 +622,18 @@ document.addEventListener('keydown', async (e) => {
   // 'e' for toggle edit mode
   if (e.key === 'e') {
     artwork.toggleEditMode()
+    return
+  }
+
+  // 'q' for quit project
+  if (e.key === 'q') {
+    exitProject()
+    return
+  }
+
+  // 'a' for toggle audio reactivity
+  if (e.key === 'a') {
+    await artwork.toggleAudioReactivity()
     return
   }
 })
