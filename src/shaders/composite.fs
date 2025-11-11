@@ -16,6 +16,8 @@ uniform sampler2D u_shadowMap;
 uniform vec2 u_resolution;
 
 uniform float u_shadowAmount;
+uniform float u_lightAmount;
+uniform float u_shadowOffset;
 
 // FXAA quality parameters (conservative settings for performance)
 #define FXAA_REDUCE_MIN   (1.0 / 128.0)
@@ -87,9 +89,16 @@ void main() {
     vec4 trees = fxaa(u_treesTexture, fragCoord, u_resolution,
                       v_rgbNW, v_rgbNE, v_rgbSW, v_rgbSE, v_rgbM);
 
-    // Then apply shadow darkening (preserves shadow grain)
-    float shade = texture(u_shadowMap, v_uv).r;
-    vec3 finalColor = trees.rgb * max(0., (1.0 - shade * u_shadowAmount));
+    // Apply shadow/light effect
+    float shade = texture(u_shadowMap, v_uv).r + u_shadowOffset;
+
+    // Split into shadow (positive) and light (negative) with separate scaling
+    float shadow = max(0.0, shade) * u_shadowAmount;
+    float light = max(0.0, -shade) * u_lightAmount;
+
+    // Mix with black for shadow, mix with white for light
+    vec3 darkened = mix(trees.rgb, vec3(0.0), shadow);
+    vec3 finalColor = mix(darkened, vec3(1.0), light);
 
     fragColor = vec4(finalColor, 1.0);
 }

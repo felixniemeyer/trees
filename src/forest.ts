@@ -34,6 +34,10 @@ export class Forest {
   private audioOffsets: number[] = []
   private smoothedEnergies: number[] = []
   private lastFrameTime: number = performance.now()
+  private audioContext: AudioContext | null = null
+  private analyser: AnalyserNode | null = null
+  private audioDataArray: Float32Array | null = null
+  private audioEnabled: boolean = false
 
   // Controls - initialized inline
   private shadowSizeFader = new Controls.Fader.Receiver(
@@ -53,21 +57,35 @@ export class Forest {
   private shadowAmountFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
       new Controls.Base.Args('shadow amount', 40, 15, 20, 30, '#58a'),
-      1.5, 0, 3, 2
+      5, 0, 10, 2
+    )
+  )
+
+  private lightAmountFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('light amount', 60, 15, 20, 30, '#58a'),
+      5, 0, 10, 2
+    )
+  )
+
+  private shadowOffsetFader = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('shadow offset', 80, 15, 20, 30, '#58a'),
+      0.0, -1, 1, 2
     )
   )
 
   private audioScaleFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('audio scale', 60, 15, 20, 30, '#a85'),
+      new Controls.Base.Args('audio scale', 60, 60, 20, 15, '#a85'),
       0.5, 0, 1, 2
     )
   )
 
   private audioSmoothingFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('audio smoothing', 80, 15, 20, 30, '#a85'),
-      1.0, 0, 1, 2
+      new Controls.Base.Args('audio smoothing', 80, 60, 20, 15, '#a85'),
+      0.3, 0, 1, 2
     )
   )
 
@@ -317,7 +335,7 @@ export class Forest {
     // No explicit update needed here
   }
 
-  render(time: number, targetFramebuffer: WebGLFramebuffer | null, audioEnabled: boolean, audioData: Float32Array, debugMode: number = 0) {
+  render(time: number, targetFramebuffer: WebGLFramebuffer | null, debugMode: number = 0) {
     const gl = this.gl
 
     // Calculate delta time
@@ -326,8 +344,13 @@ export class Forest {
     this.lastFrameTime = now
 
     // Process audio if enabled
-    if (audioEnabled && audioData.length > 0) {
-      this.processAudio(audioData, deltaTime)
+    if (this.audioEnabled && this.analyser && this.audioDataArray) {
+      this.analyser.getFloatFrequencyData(this.audioDataArray)
+      this.processAudio(this.audioDataArray, deltaTime)
+      // Debug: log first smoothed energy value occasionally
+      if (Math.random() < 0.01) {
+        console.log('Audio processing:', this.smoothedEnergies[0], 'offset:', this.audioOffsets[0])
+      }
     }
 
     // Update phase: Update all renderers (they may update their flow textures if dirty)
@@ -351,7 +374,7 @@ export class Forest {
       // Base time animation
       const baseTime = time * this.treeSpeeds[i]! * 0.1
       // Add audio offset if audio is enabled
-      const totalTime = baseTime + (audioEnabled ? this.audioOffsets[i]! : 0)
+      const totalTime = baseTime + (this.audioEnabled ? this.audioOffsets[i]! : 0)
       this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, debugMode)
     }
 
@@ -403,6 +426,8 @@ export class Forest {
     gl.uniform1i(this.compositeProgram.uniLocs.u_treesTexture, 0)
 
     gl.uniform1f(this.compositeProgram.uniLocs.u_shadowAmount, this.shadowAmountFader.value)
+    gl.uniform1f(this.compositeProgram.uniLocs.u_lightAmount, this.lightAmountFader.value)
+    gl.uniform1f(this.compositeProgram.uniLocs.u_shadowOffset, this.shadowOffsetFader.value)
 
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.shadowMap)
@@ -450,13 +475,24 @@ export class Forest {
       // Normalize from dB (-100 to 0) to 0-1 range
       const normalizedEnergy = Math.max(0, Math.min(1, (avgEnergyDb + 100) / 100))
 
+      // Debug first tree's raw data occasionally
+      if (i === 0 && Math.random() < 0.01) {
+        console.log('Tree 0 - Bins:', binStart, 'to', binEnd, 'avgDb:', avgEnergyDb.toFixed(2), 'normalized:', normalizedEnergy.toFixed(3))
+      }
+
       // Smooth energy
       // audioSmoothingAmount: 0 = instant, 1 = smooth
       const smoothFactor = Math.min(1, deltaTime * 3 * (1 - this.audioSmoothingFader.value))
       this.smoothedEnergies[i] = this.smoothedEnergies[i]! + (normalizedEnergy - this.smoothedEnergies[i]!) * smoothFactor
 
       // Accumulate audio offset (sensitivity can be adjusted)
-      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * deltaTime * this.audioScaleFader.value
+      const audioScale = this.audioScaleFader.value
+      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * deltaTime * audioScale
+
+      // Debug first tree occasionally
+      if (i === 0 && Math.random() < 0.01) {
+        console.log('Audio scale:', audioScale, 'energy:', this.smoothedEnergies[i], 'offset delta:', this.smoothedEnergies[i]! * deltaTime * audioScale)
+      }
     }
   }
 
@@ -619,8 +655,7 @@ export class Forest {
 
   getControls(
     onAddTree: () => Promise<void>,
-    onRemoveTree: () => Promise<void>,
-    onToggleAudio: (value: boolean) => Promise<void>
+    onRemoveTree: () => Promise<void>
   ) {
     // Pads - stored as class members
     this.addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
@@ -673,7 +708,10 @@ export class Forest {
         new Controls.Base.Args('audio reactivity', 20, 0, 20, 15, '#a85'),
         false
       ),
-      onToggleAudio
+      async () => {
+        const result = await this.toggleAudioReactivity()
+        return result
+      }
     )
 
     return {
@@ -690,10 +728,51 @@ export class Forest {
       'shadow size': this.shadowSizeFader,
       'shadow alpha': this.shadowAlphaFader,
       'shadow amount': this.shadowAmountFader,
+      'light amount': this.lightAmountFader,
+      'shadow offset': this.shadowOffsetFader,
       'audio scale': this.audioScaleFader,
       'audio smoothing': this.audioSmoothingFader,
       'audio reactivity': this.audioToggle,
       'shuffle frequencies': this.shuffleFrequenciesPad,
+    }
+  }
+
+  // Audio methods
+  async initAudio() {
+    try {
+      this.audioContext = new AudioContext()
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const source = this.audioContext.createMediaStreamSource(stream)
+
+      this.analyser = this.audioContext.createAnalyser()
+      this.analyser.fftSize = 2048
+      this.analyser.smoothingTimeConstant = 0.3
+
+      source.connect(this.analyser)
+
+      this.audioDataArray = new Float32Array(this.analyser.frequencyBinCount)
+
+      console.log('Audio initialized - microphone active')
+      return true
+    } catch (error) {
+      console.error('Failed to initialize audio:', error)
+      return false
+    }
+  }
+
+  async toggleAudioReactivity() {
+    if (!this.audioEnabled && !this.audioContext) {
+      const success = await this.initAudio()
+      if (success) {
+        this.audioEnabled = true
+        console.log('Audio reactivity: ON')
+        return true
+      }
+      return false
+    } else {
+      this.audioEnabled = !this.audioEnabled
+      console.log(`Audio reactivity: ${this.audioEnabled ? 'ON' : 'OFF'}`)
+      return this.audioEnabled
     }
   }
 
@@ -705,5 +784,10 @@ export class Forest {
     gl.deleteTexture(this.shadowMap)
     gl.deleteFramebuffer(this.shadowFramebuffer)
     gl.deleteVertexArray(this.quadVAO)
+
+    // Clean up audio
+    if (this.audioContext) {
+      this.audioContext.close()
+    }
   }
 }

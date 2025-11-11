@@ -25,15 +25,6 @@ class Artwork {
   isEditMode: boolean = true
   debugMode: number = 0
   startTime: number = Date.now()
-
-  // Audio reactivity
-  audioContext: AudioContext | null = null
-  analyser: AnalyserNode | null = null
-  audioDataArray: Float32Array<ArrayBuffer> | null = null
-  audioEnabled: boolean = false
-  audioEnergies: number[] = []
-
-  // Storage reference
   storage: IndexedDBStorage
 
   constructor(mapper: WebMapper, trees: TriangleStripArea[], storage: IndexedDBStorage) {
@@ -71,46 +62,6 @@ class Artwork {
       this.forest = new Forest(this.mapper.gl, this.trees, this.mapper.projContext, this.mapper, [canvas.width, canvas.height])
     }
     console.log(`Removed tree. Total: ${this.trees.length}`)
-  }
-
-  // Audio methods
-  async initAudio() {
-    try {
-      this.audioContext = new AudioContext()
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const source = this.audioContext.createMediaStreamSource(stream)
-
-      this.analyser = this.audioContext.createAnalyser()
-      this.analyser.fftSize = 2048
-      this.analyser.smoothingTimeConstant = 0.3
-
-      source.connect(this.analyser)
-
-      this.audioDataArray = new Float32Array(this.analyser.frequencyBinCount)
-      this.audioEnergies = new Array(this.trees.length).fill(0)
-
-      console.log('Audio initialized - microphone active')
-      return true
-    } catch (error) {
-      console.error('Failed to initialize audio:', error)
-      return false
-    }
-  }
-
-  async toggleAudioReactivity() {
-    if (!this.audioEnabled && !this.audioContext) {
-      const success = await this.initAudio()
-      if (success) {
-        this.audioEnabled = true
-        console.log('Audio reactivity: ON')
-        return true
-      }
-      return false
-    } else {
-      this.audioEnabled = !this.audioEnabled
-      console.log(`Audio reactivity: ${this.audioEnabled ? 'ON' : 'OFF'}`)
-      return this.audioEnabled
-    }
   }
 
   toggleEditMode() {
@@ -197,22 +148,10 @@ class Artwork {
 
       // Render artwork in proj mode (render to screen, framebuffer = null)
       if (!this.mapper.getPhotoMode() && !this.debugMode) {
-        // Audio analysis
-        if (this.audioEnabled && this.analyser && this.audioDataArray) {
-          this.analyser.getFloatFrequencyData(this.audioDataArray)
-
-          // Update audio energies array for each tree based on its frequency index
-          if (this.audioEnergies.length !== this.trees.length) {
-            this.audioEnergies = new Array(this.trees.length).fill(0)
-          }
-
-          // Forest will handle the frequency-to-bin mapping
-        }
-
-        // Normal mode: render with Forest (handles all trees with shadows)
+        // Normal mode: render with Forest (handles all trees with shadows and audio)
         const time = (Date.now() - this.startTime) / 1000 // seconds
         this.forest.update()
-        this.forest.render(time, null, this.audioEnabled, this.audioDataArray || new Float32Array(0), this.debugMode)
+        this.forest.render(time, null, this.debugMode)
       }
 
       // WebMapper automatically renders areas/handles in edit mode
@@ -514,8 +453,7 @@ function setupControlPanel() {
   // Trees Tab - controls provided by Forest
   const treesControls = artwork!.forest.getControls(
     async () => await artwork!.addTree(),
-    async () => await artwork!.removeTree(),
-    async () => { await artwork!.toggleAudioReactivity() }
+    async () => await artwork!.removeTree()
   )
 
   const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
@@ -631,9 +569,9 @@ document.addEventListener('keydown', async (e) => {
     return
   }
 
-  // 'a' for toggle audio reactivity
+  // 'a' for toggle audio reactivity (handled by Forest)
   if (e.key === 'a') {
-    await artwork.toggleAudioReactivity()
+    await artwork.forest.toggleAudioReactivity()
     return
   }
 })

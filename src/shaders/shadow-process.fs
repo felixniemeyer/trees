@@ -28,21 +28,13 @@ void main() {
     float currentDepth = texture(u_treesTexture, v_uv).a;
     float offsetDepth = texture(u_treesTexture, v_uv + aspectCorrectedOffset).a;
 
-    // Calculate soft shadow
+    // Calculate soft shadow/light (branchless, no min/max/abs)
     float depthDelta = currentDepth - offsetDepth;
+    float normalizedLookupDist = lookupLength / u_shadowSize;
 
-    if (depthDelta > 0.0) {
-        float gradientLength = depthDelta;
-        float normalizedLookupDist = lookupLength / u_shadowSize;
+    // Simple linear calculation: positive = shadow, negative = light
+    float shade = depthDelta * (1.0 - normalizedLookupDist);
 
-        // Shade is strongest at edge of gradient
-        // Maps from 1.0 at center to 0.0 at edge
-        float shade = 1.0 - min(1.0, gradientLength - normalizedLookupDist);
-
-        // Output shade in red channel with alpha blending weight
-        fragColor = vec4(shade, 0.0, 0.0, u_shadowAlpha);
-    } else {
-        // No shadow - output zero with blend weight
-        fragColor = vec4(0.0, 0.0, 0.0, u_shadowAlpha);
-    }
+    // Output shade in red channel (can be negative for light!)
+    fragColor = vec4(shade, 0.0, 0.0, u_shadowAlpha);
 }
