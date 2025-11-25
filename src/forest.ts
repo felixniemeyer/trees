@@ -1,20 +1,25 @@
 import { TriangleStripArtworkRenderer } from './artwork-renderer'
 import ShaderProgram from '../../web-mapper/src/utils/shader-program'
-import { TriangleStripArea, type WebMapper, type ProjRenderContext } from 'web-mapper'
+import { TriangleStripArea, type WebMapper, type ProjRenderContext, Point } from 'web-mapper'
 import { vec2 } from 'gl-matrix'
 import shadowProcessVs from './shaders/shadow-process.vs'
 import shadowProcessFs from './shaders/shadow-process.fs'
 import compositeVs from './shaders/composite.vs'
 import compositeFs from './shaders/composite.fs'
 import { Controls } from 'av-controls'
+import type IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 
 export class Forest {
   private gl: WebGL2RenderingContext
+  private webMapper: WebMapper
+  private storage: IndexedDBStorage
+  private renderContext: ProjRenderContext
   private areas: TriangleStripArea[]
   private renderers: TriangleStripArtworkRenderer[]
   private treeSpeeds: number[]
   private treeDepths: number[]
   private resolution: [number, number]
+  private treeCount: number = 0
 
   // Render targets
   private treesTexture: WebGLTexture
@@ -105,59 +110,25 @@ export class Forest {
 
   constructor(
     gl: WebGL2RenderingContext,
-    areas: TriangleStripArea[],
-    renderContext: ProjRenderContext,
     webMapper: WebMapper,
+    storage: IndexedDBStorage,
+    _artworkId: string,
+    renderContext: ProjRenderContext,
     resolution: [number, number]
   ) {
     this.gl = gl
-    this.areas = areas
+    this.webMapper = webMapper
+    this.storage = storage
+    this.renderContext = renderContext
     this.resolution = resolution
 
-    // Create renderers for each area
-    this.renderers = areas.map(area =>
-      new TriangleStripArtworkRenderer(area, gl, renderContext, webMapper)
-    )
-
-    // Set resolution for all renderers
-    this.renderers.forEach(renderer => {
-      renderer.setResolution(vec2.fromValues(resolution[0], resolution[1]))
-    })
-
-    // Initialize speeds, depths, and frequency indices from metadata or generate new ones
+    // Areas will be populated by loadTrees()
+    this.areas = []
+    this.renderers = []
     this.treeSpeeds = []
     this.treeDepths = []
-
-    for (let i = 0; i < areas.length; i++) {
-      const area = areas[i]!
-      if (!area.metadata) {
-        area.metadata = {}
-      }
-
-      // Read or generate speed
-      if (area.metadata.speed === undefined) {
-        area.metadata.speed = Math.random() * 0.4 - 0.2 // -0.2 to 0.2
-        area.save()
-      }
-      this.treeSpeeds.push(area.metadata.speed)
-
-      // Read or generate depth
-      if (area.metadata.depth === undefined) {
-        area.metadata.depth = Math.random()
-        area.save()
-      }
-      this.treeDepths.push(area.metadata.depth)
-
-      // Read or generate frequency index (sequential by default)
-      if (area.metadata.frequencyIndex === undefined) {
-        area.metadata.frequencyIndex = i
-        area.save()
-      }
-    }
-
-    // Initialize audio arrays
-    this.audioOffsets = new Array(areas.length).fill(0)
-    this.smoothedEnergies = new Array(areas.length).fill(0)
+    this.audioOffsets = []
+    this.smoothedEnergies = []
 
     // Create render targets
     this.treesTexture = this.createTexture()
@@ -173,6 +144,148 @@ export class Forest {
 
     // Create fullscreen quad
     this.quadVAO = this.createFullscreenQuad()
+  }
+
+  // Tree loading and management
+  async loadTrees() {
+    // Load tree count from storage
+    this.treeCount = await this.storage.loadArea('tree-count') || 1
+
+    // Load each tree
+    for (let i = 0; i < this.treeCount; i++) {
+      const tree = await this.webMapper.loadOrCreateArea(`tree-${i}`, () => this.createDefaultTree(i))
+      this.areas.push(tree as TriangleStripArea)
+
+      // Initialize metadata if needed
+      this.initializeTreeMetadata(tree as TriangleStripArea, i)
+    }
+
+    // Update renderers and arrays
+    this.updateRenderersAndArrays()
+
+    console.log(`Forest: Loaded ${this.treeCount} tree(s)`)
+  }
+
+  private createDefaultTree(index: number): TriangleStripArea {
+    const points = [
+      new Point(vec2.fromValues(-0.2, -0.2), 0),
+      new Point(vec2.fromValues(0.2, -0.2), 0),
+      new Point(vec2.fromValues(-0.2, 0.2), 0),
+      new Point(vec2.fromValues(0.2, 0.2), 0),
+    ]
+    const color = this.generateColor(index)
+    const angle = 0
+    return new TriangleStripArea(points, color, angle)
+  }
+
+  private generateColor(index: number): [number, number, number] {
+    // Generate deterministic but varied colors based on index
+    const hue = (index * 137.508) % 360 // Golden angle for good distribution
+    return this.hslToRgb(hue / 360, 0.7, 0.6)
+  }
+
+  private hslToRgb(h: number, s: number, l: number): [number, number, number] {
+    let r, g, b
+
+    if (s === 0) {
+      r = g = b = l
+    } else {
+      const hue2rgb = (p: number, q: number, t: number) => {
+        if (t < 0) t += 1
+        if (t > 1) t -= 1
+        if (t < 1/6) return p + (q - p) * 6 * t
+        if (t < 1/2) return q
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6
+        return p
+      }
+
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+      const p = 2 * l - q
+      r = hue2rgb(p, q, h + 1/3)
+      g = hue2rgb(p, q, h)
+      b = hue2rgb(p, q, h - 1/3)
+    }
+
+    return [r, g, b]
+  }
+
+  private initializeTreeMetadata(area: TriangleStripArea, index: number) {
+    if (!area.metadata) {
+      area.metadata = {}
+    }
+
+    // Initialize speed
+    if (area.metadata.speed === undefined) {
+      area.metadata.speed = Math.random() * 0.4 - 0.2 // -0.2 to 0.2
+      area.save()
+    }
+
+    // Initialize depth
+    if (area.metadata.depth === undefined) {
+      area.metadata.depth = Math.random()
+      area.save()
+    }
+
+    // Initialize frequency index
+    if (area.metadata.frequencyIndex === undefined) {
+      area.metadata.frequencyIndex = index
+      area.save()
+    }
+  }
+
+  private updateRenderersAndArrays() {
+    // Recreate renderers
+    this.renderers = this.areas.map(area =>
+      new TriangleStripArtworkRenderer(area, this.gl, this.renderContext, this.webMapper)
+    )
+
+    // Set resolution for all renderers
+    this.renderers.forEach(renderer => {
+      renderer.setResolution(vec2.fromValues(this.resolution[0], this.resolution[1]))
+    })
+
+    // Update speeds and depths arrays
+    this.treeSpeeds = this.areas.map(area => area.metadata!.speed)
+    this.treeDepths = this.areas.map(area => area.metadata!.depth)
+
+    // Resize audio arrays
+    this.audioOffsets = new Array(this.areas.length).fill(0)
+    this.smoothedEnergies = new Array(this.areas.length).fill(0)
+  }
+
+  async addTree() {
+    const index = this.treeCount
+    const tree = await this.webMapper.loadOrCreateArea(`tree-${index}`, () => this.createDefaultTree(index))
+    this.areas.push(tree as TriangleStripArea)
+    this.initializeTreeMetadata(tree as TriangleStripArea, index)
+
+    this.treeCount++
+    await this.storage.saveArea('tree-count', this.treeCount)
+
+    this.updateRenderersAndArrays()
+
+    console.log(`Added tree ${index}. Total: ${this.treeCount}`)
+  }
+
+  async removeTree() {
+    if (this.treeCount === 0) {
+      console.log('No trees to remove')
+      return
+    }
+
+    const index = this.treeCount - 1
+    const tree = this.areas.pop()!
+
+    // Remove from WebMapper and storage
+    await this.storage.saveArea(`tree-${index}`, null)
+    this.webMapper.removeArea(tree)
+
+    this.treeCount--
+    await this.storage.saveArea('tree-count', this.treeCount)
+
+    this.updateRenderersAndArrays()
+
+    console.log(`Removed tree. Total: ${this.treeCount}`)
   }
 
   setResolution(width: number, height: number) {
@@ -442,7 +555,7 @@ export class Forest {
     gl.bindVertexArray(null)
   }
 
-  private processAudio(audioData: Float32Array, deltaTime: number) {
+  private processAudio(audioData: any, deltaTime: number) {
     const numTrees = this.areas.length
     const minFreq = 30
     const maxFreq = 5000
@@ -653,18 +766,15 @@ export class Forest {
     console.log(`Moved tree ${selectedIndex} down (depth: ${this.treeDepths[selectedIndex]})`)
   }
 
-  getControls(
-    onAddTree: () => Promise<void>,
-    onRemoveTree: () => Promise<void>
-  ) {
-    // Pads - stored as class members
+  getControls() {
+    // Pads - stored as class members, call Forest methods directly
     this.addTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('add tree', 60, 0, 20, 15, '#4a8')
-    ), onAddTree)
+    ), () => this.addTree())
 
     this.removeTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('remove tree', 80, 0, 20, 15, '#a48')
-    ), onRemoveTree)
+    ), () => this.removeTree())
 
     this.moveTreeUpPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('move up', 0, 60, 20, 15, '#6a8')

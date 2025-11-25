@@ -1,7 +1,6 @@
 import './style.css'
 import './project-selection.css'
-import { vec2, vec3 } from 'gl-matrix'
-import { WebMapper, TriangleStripArea, Point } from 'web-mapper'
+import { WebMapper } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 import { Forest } from './forest'
@@ -15,53 +14,25 @@ if (!canvas) {
 
 // Project selection state
 let projectSelection: ProjectSelection | null = null
-let artwork: Artwork | null = null
+let artwork: ArtworkContainer | null = null
 
-// Artwork class - encapsulates all mapper-dependent state and logic
-class Artwork {
+// ArtworkContainer - coordinates WebMapper and Forest (will support multiple artworks in future)
+class ArtworkContainer {
   mapper: WebMapper
   forest: Forest
-  trees: TriangleStripArea[]
+  storage: IndexedDBStorage
   isEditMode: boolean = true
   debugMode: number = 0
   startTime: number = Date.now()
-  storage: IndexedDBStorage
 
-  constructor(mapper: WebMapper, trees: TriangleStripArea[], storage: IndexedDBStorage) {
+  constructor(mapper: WebMapper, forest: Forest, storage: IndexedDBStorage) {
     this.mapper = mapper
-    this.trees = trees
+    this.forest = forest
     this.storage = storage
-    this.forest = new Forest(mapper.gl, trees, mapper.projContext, mapper, [canvas.width, canvas.height])
   }
 
   dispose() {
     this.forest.dispose()
-  }
-
-  // Tree management methods
-  async addTree() {
-    const newIndex = this.trees.length
-    const newTree = await this.mapper.loadOrCreateArea(`tree-${newIndex}`, () => createDefaultTree(newIndex))
-    this.trees.push(newTree as TriangleStripArea)
-    await this.storage.saveArea('tree-count', this.trees.length)
-    this.forest.dispose()
-    this.forest = new Forest(this.mapper.gl, this.trees, this.mapper.projContext, this.mapper, [canvas.width, canvas.height])
-    console.log(`Added tree ${newIndex}. Total: ${this.trees.length}`)
-  }
-
-  async removeTree() {
-    if (this.trees.length === 0) return
-    const lastTree = this.trees.pop()!
-    if ((lastTree as any).storageKey) {
-      await this.storage.saveArea((lastTree as any).storageKey, null)
-    }
-    this.mapper.removeArea(lastTree)
-    await this.storage.saveArea('tree-count', this.trees.length)
-    this.forest.dispose()
-    if (this.trees.length > 0) {
-      this.forest = new Forest(this.mapper.gl, this.trees, this.mapper.projContext, this.mapper, [canvas.width, canvas.height])
-    }
-    console.log(`Removed tree. Total: ${this.trees.length}`)
   }
 
   toggleEditMode() {
@@ -325,32 +296,6 @@ const storage = new IndexedDBStorage('trees', 'v1.0.0')
 await storage.init()
 
 // Helper function to generate colors for trees
-function generateColor(index: number): vec3 {
-  const colors = [
-    vec3.fromValues(0.3, 0.8, 0.6), // green
-    vec3.fromValues(1.0, 0.3, 0.3), // red
-    vec3.fromValues(0.3, 0.5, 1.0), // blue
-    vec3.fromValues(1.0, 0.8, 0.2), // yellow
-    vec3.fromValues(1.0, 0.4, 0.8), // magenta
-    vec3.fromValues(0.2, 0.9, 0.9), // cyan
-  ]
-  return colors[index % colors.length]!
-}
-
-// Helper function to create default tree
-function createDefaultTree(index: number): TriangleStripArea {
-  const points = [
-    new Point(vec2.fromValues(-0.2, -0.2), 0),
-    new Point(vec2.fromValues(0.2, -0.2), 0),
-    new Point(vec2.fromValues(-0.2, 0.2), 0),
-    new Point(vec2.fromValues(0.2, 0.2), 0),
-  ]
-  const color = generateColor(index)
-  const angle = 0
-  // Don't pass storage to constructor - will be set up later via setStorage()
-  return new TriangleStripArea(points, color, angle)
-}
-
 // Initialize project function
 async function initializeProject(projectId: string) {
   // Set current project in storage
@@ -380,17 +325,21 @@ async function initializeProject(projectId: string) {
   // Enable edit mode so we can manipulate points
   mapper.setEditMode(true)
 
-  // Load trees from storage
-  const treeCount = await storage.loadArea('tree-count') || 1
-  const trees: TriangleStripArea[] = []
+  // Create Forest - handles tree loading, management, and rendering
+  const forest = new Forest(
+    mapper.gl,
+    mapper,
+    storage,
+    'trees',
+    mapper.projContext,
+    [canvas.width, canvas.height]
+  )
 
-  for (let i = 0; i < treeCount; i++) {
-    const tree = await mapper.loadOrCreateArea(`tree-${i}`, () => createDefaultTree(i))
-    trees.push(tree as TriangleStripArea)
-  }
+  // Load trees
+  await forest.loadTrees()
 
-  // Create Artwork instance - encapsulates all mapper-dependent state
-  artwork = new Artwork(mapper, trees, storage)
+  // Create ArtworkContainer - coordinates WebMapper and Forest
+  artwork = new ArtworkContainer(mapper, forest, storage)
 
   // Set up resize observer and render callback
   artwork.setupResizeObserver()
@@ -400,7 +349,6 @@ async function initializeProject(projectId: string) {
   setupControlPanel()
 
   console.log('Trees app initialized')
-  console.log(`Loaded ${trees.length} tree(s) for project ${projectId}`)
 }
 
 // Show project selection UI
@@ -450,11 +398,8 @@ async function exitProject() {
 // ========== AV-CONTROLS SETUP ==========
 // Set up control panel with tabs
 function setupControlPanel() {
-  // Trees Tab - controls provided by Forest
-  const treesControls = artwork!.forest.getControls(
-    async () => await artwork!.addTree(),
-    async () => await artwork!.removeTree()
-  )
+  // Trees Tab - controls provided by Forest (no callbacks needed, Forest manages itself)
+  const treesControls = artwork!.forest.getControls()
 
   const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
     new Controls.Base.Args('Trees', 0, 0, 100, 100, '#333')
@@ -537,11 +482,11 @@ document.addEventListener('keydown', async (e) => {
 
   // Arrow keys for tree management
   if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
-    await artwork.addTree()
+    await artwork.forest.addTree()
     return
   }
   if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
-    await artwork.removeTree()
+    await artwork.forest.removeTree()
     return
   }
 
