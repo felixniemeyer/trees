@@ -1,10 +1,9 @@
 import { vec2 } from "gl-matrix"
 import { GridArea, ProjRenderContext } from "web-mapper"
-import ShaderProgram from "../../utils/shader-program"
-import { RectVao } from "../../utils/basic-vaos"
+import ShaderProgram from "utils/shader-program"
+import { RectVao } from "utils/basic-vaos"
 import { Controls } from "av-controls"
-import { RGBFaders } from "time-n-controls"
-import type { VisionSystem } from "../../vision"
+import { RGBFaders } from "time-n-controls";
 
 import updateVs from "./shaders/update.vs"
 import updateFs from "./shaders/update.fs"
@@ -188,8 +187,7 @@ export class BokehArtwork {
   constructor(
     public area: GridArea,
     private gl: WebGL2RenderingContext,
-    private renderContext: ProjRenderContext,
-    private visionSystem: VisionSystem
+    private renderContext: ProjRenderContext
   ) {
     this.updateProgram = new ShaderProgram(gl, updateVs, updateFs)
     this.renderProgram = new ShaderProgram(gl, renderVs, renderFs)
@@ -199,7 +197,7 @@ export class BokehArtwork {
 
     this.rectVao = new RectVao(gl)
     
-    const excitement = this.visionSystem.getLongDecayExcitement()
+    const excitement = 0
     
     // Setup update program uniforms
     this.updateProgram.use()
@@ -404,7 +402,7 @@ export class BokehArtwork {
     gl.uniform1f(updateUniLocs.time, this.noiseTime)
     gl.uniform2fv(updateUniLocs.aspect, this.aspect)
     
-    const excitement = this.visionSystem.getExcitementSum()
+    const excitement = 0
     const xWind = this.xWindBaseFader.value * (1 + excitement * 1.5) 
     gl.uniform1f(updateUniLocs.xWind, xWind)
     gl.uniform1f(updateUniLocs.speed, this.speedFader.value ** 2)

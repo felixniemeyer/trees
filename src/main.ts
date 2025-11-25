@@ -4,6 +4,8 @@ import { WebMapper } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 import { Forest } from './forest'
+import { BokehArtwork } from './components/bokeh';
+import { bokeh } from './geometry';
 import { Controls, Transports } from 'av-controls'
 
 // Get canvas
@@ -20,14 +22,16 @@ let artwork: ArtworkContainer | null = null
 class ArtworkContainer {
   mapper: WebMapper
   forest: Forest
+  bokeh: BokehArtwork
   storage: IndexedDBStorage
   isEditMode: boolean = true
   debugMode: number = 0
   startTime: number = Date.now()
 
-  constructor(mapper: WebMapper, forest: Forest, storage: IndexedDBStorage) {
+  constructor(mapper: WebMapper, forest: Forest, bokeh: BokehArtwork, storage: IndexedDBStorage) {
     this.mapper = mapper
     this.forest = forest
+    this.bokeh = bokeh
     this.storage = storage
   }
 
@@ -93,6 +97,7 @@ class ArtworkContainer {
         console.log(`Canvas resized: ${width}x${height}`)
         ;(this.mapper as any).setResolution(width, height)
         this.forest.setResolution(width, height)
+        this.bokeh.setResolution(vec2.fromValues(width, height))
       }
     })
     resizeObserver.observe(canvas)
@@ -123,6 +128,7 @@ class ArtworkContainer {
         const time = (Date.now() - this.startTime) / 1000 // seconds
         this.forest.update()
         this.forest.render(time, null, this.debugMode)
+        this.bokeh.render(deltaTime, null)
       }
 
       // WebMapper automatically renders areas/handles in edit mode
@@ -323,6 +329,9 @@ async function initializeProject(projectId: string) {
   // Set photo mode from saved state
   mapper.setPhotoMode(savedPhotoMode)
 
+  // Add bokeh area
+  mapper.addArea(bokeh)
+
   // Enable edit mode so we can manipulate points
   mapper.setEditMode(true)
 
@@ -336,11 +345,17 @@ async function initializeProject(projectId: string) {
     [canvas.width, canvas.height]
   )
 
+  const bokehArtwork = new BokehArtwork(
+    bokeh,
+    mapper.gl,
+    mapper.projContext
+  )
+
   // Load trees
   await forest.loadTrees()
 
   // Create ArtworkContainer - coordinates WebMapper and Forest
-  artwork = new ArtworkContainer(mapper, forest, storage)
+  artwork = new ArtworkContainer(mapper, forest, bokehArtwork, storage)
 
   // Set up resize observer and render callback
   artwork.setupResizeObserver()
@@ -407,6 +422,7 @@ function getWsUrl(): string | null {
 function setupControlPanel() {
   // Trees Tab - controls provided by Forest (no callbacks needed, Forest manages itself)
   const treesControls = artwork!.forest.getControls()
+  const bokehControls = artwork!.bokeh.getControls()
 
   const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
     new Controls.Base.Args('Trees', 0, 0, 100, 100, '#333')
@@ -445,6 +461,7 @@ function setupControlPanel() {
     'Trees' // initially active tab
   ), {
     'Trees': treesTab,
+    'Bokeh': bokehControls,
     'Mapping': mappingTab,
   })
 
