@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import glsl from 'vite-plugin-glsl'
+import path from 'path'
 
 export default defineConfig({
   plugins: [glsl({
@@ -11,6 +12,11 @@ export default defineConfig({
       '**/*.fs'
     ]
   })],
+  resolve: {
+    alias: {
+      'utils': path.resolve(__dirname, 'src/utils')
+    }
+  },
   server: {
     watch: {
       // Watch npm linked packages
