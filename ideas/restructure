@@ -1,0 +1,2 @@
+- move tree artwork into components as well
+  - long term goal: make components importable packages
