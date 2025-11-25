@@ -225,36 +225,37 @@ const handleLineWidthFader = new Controls.Fader.Receiver(
 const previousAreaPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   new Controls.Base.Args('previous area', 0, 30, 20, 15, '#a5a')
 ), () => {
-  // TODO: implement selectPreviousArea
-  console.log('Previous area (not implemented)')
+  artwork?.mapper.selectPreviousArea()
+})
+
+const deselectAreaPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+  new Controls.Base.Args('deselect area', 0, 45, 20, 10, '#a5a')
+), () => {
+  artwork?.mapper.deselectArea()
 })
 
 const nextAreaPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   new Controls.Base.Args('next area', 0, 55, 20, 15, '#a5a')
 ), () => {
-  // TODO: implement selectNextArea
-  console.log('Next area (not implemented)')
+  artwork?.mapper.selectNextArea()
 })
 
 const deselectPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   new Controls.Base.Args('deselect point', 80, 45, 20, 10, '#5aa')
 ), () => {
-  // TODO: implement deselectPoint
-  console.log('Deselect point (not implemented)')
+  artwork?.mapper.deselectPoint()
 })
 
 const previousPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   new Controls.Base.Args('previous point', 80, 30, 20, 15, '#aa5')
 ), () => {
-  // TODO: implement selectPreviousPoint
-  console.log('Previous point (not implemented)')
+  artwork?.mapper.selectPreviousPoint()
 })
 
 const nextPointPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
   new Controls.Base.Args('next point', 80, 55, 20, 15, '#aa5')
 ), () => {
-  // TODO: implement selectNextPoint
-  console.log('Next point (not implemented)')
+  artwork?.mapper.selectNextPoint()
 })
 
 const moveGroupedPointsSwitch = new Controls.Switch.Receiver(
@@ -395,6 +396,12 @@ async function exitProject() {
   showProjectSelection()
 }
 
+// Helper to get WebSocket URL from query params
+function getWsUrl(): string | null {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('ws') || params.get('websocket') || 'ws://localhost:8080'
+}
+
 // ========== AV-CONTROLS SETUP ==========
 // Set up control panel with tabs
 function setupControlPanel() {
@@ -421,6 +428,7 @@ function setupControlPanel() {
     'handle size': handleSizeFader,
     'handle line width': handleLineWidthFader,
     'previous area': previousAreaPad,
+    'deselect area': deselectAreaPad,
     'next area': nextAreaPad,
     'deselect point': deselectPointPad,
     'previous point': previousPointPad,
@@ -447,12 +455,19 @@ function setupControlPanel() {
     'tabs': tabs,
   })
 
-  // Set up Window transport
-  if (window.opener) {
+  // Set up transport
+  const wsUrl = getWsUrl()
+  if (wsUrl) {
+    const panels = {
+      'trees-app': rootPanel,
+    }
+    new Transports.WebSocket.Receiver(panels, wsUrl)
+    console.log(`Control panel connected to WebSocket: ${wsUrl}`)
+  } else if (window.opener) {
     new Transports.Window.Receiver(window.opener, 'trees-controls', rootPanel)
     console.log('Control panel connected to opener window')
   } else {
-    console.warn('No opener window found - controls will not be displayed')
+    console.warn('No control transport found - controls will not be displayed')
   }
 }
 
