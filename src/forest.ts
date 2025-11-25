@@ -48,7 +48,7 @@ export class Forest {
   private shadowSizeFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
       new Controls.Base.Args('shadow size', 0, 15, 20, 30, '#58a'),
-      0.25, 0, 1, 2
+      0.25, 0.01, 1, 2
     )
   )
 
@@ -659,6 +659,7 @@ export class Forest {
     // Select next (wrap around)
     const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % this.areas.length
     this.areas[nextIndex]!.setSelected(true)
+    this.webMapper.setSelectedArea(this.areas[nextIndex]!)
     console.log(`Tree ${nextIndex} selected`)
   }
 
@@ -676,6 +677,7 @@ export class Forest {
     // Select previous (wrap around)
     const prevIndex = currentIndex === -1 ? this.areas.length - 1 : (currentIndex - 1 + this.areas.length) % this.areas.length
     this.areas[prevIndex]!.setSelected(true)
+    this.webMapper.setSelectedArea(this.areas[prevIndex]!)
     console.log(`Tree ${prevIndex} selected`)
   }
 
