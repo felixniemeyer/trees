@@ -8,7 +8,7 @@ import { RectVao } from './utils/basic-vaos'
 import finalFs from './shaders/final.fs'
 import compositeVs from './components/forest/shaders/composite.vs'
 
-import { WebMapper } from 'web-mapper'
+import { WebMapper, GridArea } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 import { Forest } from './components/forest/index'
@@ -52,6 +52,10 @@ class ArtworkContainer {
     this.storage = storage
     this.initMainFramebuffer()
     this.initFinalPass()
+    
+    // Initialize with current canvas size to avoid incomplete framebuffer
+    const rect = canvas.getBoundingClientRect()
+    this.handleResize(rect.width, rect.height)
   }
 
   initMainFramebuffer() {
@@ -60,8 +64,6 @@ class ArtworkContainer {
     this.mainFbo = gl.createFramebuffer()
     this.mainTex = gl.createTexture()
     this.mainDepthStencil = gl.createRenderbuffer()
-    
-    // Initial resize will set up storage
   }
   
   initFinalPass() {
@@ -70,7 +72,25 @@ class ArtworkContainer {
     this.quadVao = new RectVao(gl)
   }
 
+  handleResize(width: number, height: number) {
+    // Ensure integers for all render targets
+    width = Math.floor(width)
+    height = Math.floor(height)
+
+    if (width <= 0 || height <= 0) return
+
+    console.log(`Canvas resized: ${width}x${height}`)
+    ;(this.mapper as any).setResolution(width, height)
+    this.forest.setResolution(width, height)
+    this.bokeh.setResolution(vec2.fromValues(width, height))
+    this.resizeMainFramebuffer(width, height)
+  }
+
   resizeMainFramebuffer(width: number, height: number) {
+    // Dimensions already floored in handleResize, but double check
+    width = Math.floor(width)
+    height = Math.floor(height)
+
     const gl = this.mapper.gl
     this.resolution[0] = width
     this.resolution[1] = height
@@ -164,11 +184,7 @@ class ArtworkContainer {
       for (const entry of entries) {
         const width = entry.contentRect.width
         const height = entry.contentRect.height
-        console.log(`Canvas resized: ${width}x${height}`)
-        ;(this.mapper as any).setResolution(width, height)
-        this.forest.setResolution(width, height)
-        this.bokeh.setResolution(vec2.fromValues(width, height))
-        this.resizeMainFramebuffer(width, height)
+        this.handleResize(width, height)
       }
     })
     resizeObserver.observe(canvas)
@@ -181,8 +197,8 @@ class ArtworkContainer {
       // Joystick-based point movement
       if (joystickControl.x !== 0 || joystickControl.y !== 0) {
         const sensitivity = joystickSensitivityFader.value
-        const dx = joystickControl.x * sensitivity * deltaTime * 0.001
-        const dy = -joystickControl.y * sensitivity * deltaTime * 0.001
+        const dx = joystickControl.x * sensitivity * deltaTime
+        const dy = joystickControl.y * sensitivity * deltaTime
 
         // Move selected point if one exists
         this.mapper.moveSelectedPoint(dx, dy)
@@ -197,6 +213,8 @@ class ArtworkContainer {
       if (!this.mapper.getPhotoMode() && !this.debugMode && this.mainFbo) {
         const width = this.resolution[0]
         const height = this.resolution[1]
+        
+        if (width <= 1 || height <= 1) return
 
         // Bind main FBO
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.mainFbo)
@@ -215,8 +233,7 @@ class ArtworkContainer {
         this.forest.render(time, this.mainFbo, this.debugMode)
         
         // Render stencil for bokeh (to main FBO which has stencil attachment)
-        // Using the bokeh area imported from geometry
-        this.mapper.renderStencilForArea(bokeh, this.resolution)
+        this.mapper.renderStencilForArea(this.bokeh.area, this.resolution)
         
         // Render bokeh to main FBO (will use stencil test against what we just drew)
         this.bokeh.render(deltaTime, this.mainFbo)
@@ -439,6 +456,12 @@ async function initializeProject(projectId: string) {
 
   // Load or create bokeh area
   const bokehArea = await mapper.loadOrCreateArea('bokeh', () => bokeh) as GridArea
+  console.log('Loaded Bokeh Area:', bokehArea)
+  if (bokehArea.points && bokehArea.points[0] && bokehArea.points[0][0]) {
+    console.log('First point pos:', bokehArea.points[0][0].position)
+  } else {
+    console.error('Bokeh area has no points!')
+  }
 
   // Enable edit mode so we can manipulate points
   mapper.setEditMode(true)
@@ -468,6 +491,13 @@ async function initializeProject(projectId: string) {
   // Set up resize observer and render callback
   artwork.setupResizeObserver()
   artwork.setupRenderCallback(joystickControl, joystickSensitivityFader)
+  
+  // Force initial resize to ensure all framebuffers are valid
+  const rect = canvas.getBoundingClientRect()
+  artwork.handleResize(rect.width, rect.height)
+  
+  // Restart render loop
+  mapper.start()
 
   // Set up control panel now that artwork is initialized
   setupControlPanel()

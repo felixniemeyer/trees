@@ -7,7 +7,6 @@ uniform vec3 intensityColor;
 in vec2 xy; 
 flat in float smoothStepFrom; 
 flat in vec3 rgb; 
-flat in float depth; 
 flat in float intensity; 
 
 out vec4 FragColor; 
