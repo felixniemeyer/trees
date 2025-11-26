@@ -437,8 +437,8 @@ async function initializeProject(projectId: string) {
   // Set photo mode from saved state
   mapper.setPhotoMode(savedPhotoMode)
 
-  // Add bokeh area
-  mapper.addArea(bokeh)
+  // Load or create bokeh area
+  const bokehArea = await mapper.loadOrCreateArea('bokeh', () => bokeh) as GridArea
 
   // Enable edit mode so we can manipulate points
   mapper.setEditMode(true)
@@ -454,7 +454,7 @@ async function initializeProject(projectId: string) {
   )
 
   const bokehArtwork = new BokehArtwork(
-    bokeh,
+    bokehArea,
     mapper.gl,
     mapper.projContext
   )
