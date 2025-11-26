@@ -4,7 +4,7 @@ import { TriangleStripArea, type WebMapper, type ProjRenderContext, Point } from
 import { vec2 } from 'gl-matrix'
 import shadowProcessVs from './shaders/shadow-process.vs'
 import shadowProcessFs from './shaders/shadow-process.fs'
-import compositeVs from './shaders/composite.vs'
+import compositeVs from "./shaders/forest-composite.vs"
 import compositeFs from './shaders/composite.fs'
 import { Controls } from 'av-controls'
 import type IndexedDBStorage from 'web-mapper/src/storage/indexdb'

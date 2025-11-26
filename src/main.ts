@@ -6,7 +6,7 @@ import { vec2 } from 'gl-matrix'
 import ShaderProgram from '../../web-mapper/src/utils/shader-program'
 import { RectVao } from './utils/basic-vaos'
 import finalFs from './shaders/final.fs'
-import compositeVs from './components/forest/shaders/composite.vs'
+import passthroughVs from './shaders/passthrough.vs'
 
 import { WebMapper, GridArea } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
@@ -68,7 +68,7 @@ class ArtworkContainer {
   
   initFinalPass() {
     const gl = this.mapper.gl
-    this.finalProgram = new ShaderProgram(gl, compositeVs, finalFs)
+    this.finalProgram = new ShaderProgram(gl, passthroughVs, finalFs)
     this.quadVao = new RectVao(gl)
   }
 

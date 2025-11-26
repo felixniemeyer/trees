@@ -1,0 +1,24 @@
+
+okay... awesome! listen, bunch of things:
+There are two repositories right now:
+web-mapper and trees. 
+
+we just added bokeh to trees in src/components from a recent project and some things have advanced that
+bokeh is not adapted to. 
+
+first of all, after the integration, the screen renders black and needs a resize before anyting is
+shown. That's a regression and need to be fixed. 
+
+Then, the selection logic in web-mapper should apply across triangle-strip-areas and grid areas - across
+any areas of any type. Currently, a gridarea and triangle strip area can be selected at the same time.
+E.g. clicking an area should select the underlying area (using the same hit list approach as currently)
+and disable selection on any potentially selected other areas. 
+
+The weirdest issue (probably a webgl state pollution thing) is that in proj mode, the web-mapper ui
+renders as tiny as the bokeh area / viewport. Check what's causing this. Maybe a bad bokeh render call
+position in main.ts? 
+
+And then of course, I cannot see the bokeh particles, so something is going wrong there too. 
+
+Before you start, let me know any open questions and ask for clarification.
+

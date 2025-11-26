@@ -1,0 +1,3 @@
+- deactivate FXAA - it's bad on particle systems etc. 
+- enable arbitrary grid area intersections
+
