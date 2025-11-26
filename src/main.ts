@@ -302,7 +302,7 @@ const joystickSensitivityFader = new Controls.Fader.Receiver(
 )
 
 // Create storage instance (shared for project management)
-const storage = new IndexedDBStorage('trees', 'v1.0.0')
+const storage = new IndexedDBStorage('chirch')
 await storage.init()
 
 // Helper function to generate colors for trees
@@ -320,7 +320,7 @@ async function initializeProject(projectId: string) {
 
   // Create WebMapper with the storage
   const mapper = new WebMapper(canvas, {
-    artworkId: 'trees',
+    artworkId: 'chirch',
     storage: {
       get: (key: string) => storage.loadArea(key),
       set: (key: string, value: any) => storage.saveArea(key, value),
@@ -343,7 +343,7 @@ async function initializeProject(projectId: string) {
     mapper.gl,
     mapper,
     storage,
-    'trees',
+    'chirch',
     mapper.projContext,
     [canvas.width, canvas.height]
   )

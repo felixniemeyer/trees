@@ -174,7 +174,7 @@ export class BokehArtwork {
   private useStencilSwitch = new Controls.Switch.Receiver(
     new Controls.Switch.Spec(
       new Controls.Base.Args('use stencil', 80, 0, 20, 25, '#459'),
-      true 
+      false 
     )
   )
   
@@ -344,8 +344,8 @@ export class BokehArtwork {
 
     // Convert normalized coordinate deltas to pixel dimensions
     // Normalized space [-1, 1] spans 2 units, so delta * 0.5 gives the fraction of screen space
-    const pixelWidth = Math.round((areaWidth * 0.5) * this.resolution[0])
-    const pixelHeight = Math.round((areaHeight * 0.5) * this.resolution[1])
+    const pixelWidth = Math.max(1, Math.round((areaWidth * 0.5) * this.resolution[0]))
+    const pixelHeight = Math.max(1, Math.round((areaHeight * 0.5) * this.resolution[1]))
 
     // Calculate viewport position (convert center to bottom-left origin)
     const centerX = (minX + maxX) * 0.5

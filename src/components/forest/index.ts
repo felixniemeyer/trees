@@ -458,7 +458,7 @@ export class Forest {
 
     // Process audio if enabled
     if (this.audioEnabled && this.analyser && this.audioDataArray) {
-      this.analyser.getFloatFrequencyData(this.audioDataArray)
+      this.analyser.getFloatFrequencyData(this.audioDataArray as any)
       this.processAudio(this.audioDataArray, deltaTime)
       // Debug: log first smoothed energy value occasionally
       if (Math.random() < 0.01) {
