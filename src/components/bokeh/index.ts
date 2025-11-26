@@ -174,7 +174,7 @@ export class BokehArtwork {
   private useStencilSwitch = new Controls.Switch.Receiver(
     new Controls.Switch.Spec(
       new Controls.Base.Args('use stencil', 80, 0, 20, 25, '#459'),
-      false 
+      true 
     )
   )
   

@@ -3,6 +3,11 @@ import './project-selection.css'
 
 import { vec2 } from 'gl-matrix'
 
+import ShaderProgram from '../../web-mapper/src/utils/shader-program'
+import { RectVao } from './utils/basic-vaos'
+import finalFs from './shaders/final.fs'
+import compositeVs from './components/forest/shaders/composite.vs'
+
 import { WebMapper } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
@@ -31,14 +36,76 @@ class ArtworkContainer {
   debugMode: number = 0
   startTime: number = Date.now()
 
+  // Main offscreen framebuffer for compositing artworks with stencil support
+  private mainFbo: WebGLFramebuffer | null = null
+  private mainTex: WebGLTexture | null = null
+  private mainDepthStencil: WebGLRenderbuffer | null = null
+  private resolution: vec2 = vec2.fromValues(1, 1)
+  
+  private finalProgram: ShaderProgram | null = null
+  private quadVao: RectVao | null = null
+
   constructor(mapper: WebMapper, forest: Forest, bokeh: BokehArtwork, storage: IndexedDBStorage) {
     this.mapper = mapper
     this.forest = forest
     this.bokeh = bokeh
     this.storage = storage
+    this.initMainFramebuffer()
+    this.initFinalPass()
+  }
+
+  initMainFramebuffer() {
+    const gl = this.mapper.gl
+    
+    this.mainFbo = gl.createFramebuffer()
+    this.mainTex = gl.createTexture()
+    this.mainDepthStencil = gl.createRenderbuffer()
+    
+    // Initial resize will set up storage
+  }
+  
+  initFinalPass() {
+    const gl = this.mapper.gl
+    this.finalProgram = new ShaderProgram(gl, compositeVs, finalFs)
+    this.quadVao = new RectVao(gl)
+  }
+
+  resizeMainFramebuffer(width: number, height: number) {
+    const gl = this.mapper.gl
+    this.resolution[0] = width
+    this.resolution[1] = height
+    
+    // Resize texture
+    gl.bindTexture(gl.TEXTURE_2D, this.mainTex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    
+    // Resize depth/stencil buffer
+    gl.bindRenderbuffer(gl.RENDERBUFFER, this.mainDepthStencil)
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, width, height)
+    
+    // Attach to FBO
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.mainFbo)
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.mainTex, 0)
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, this.mainDepthStencil)
+    
+    // Check status
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error('Main framebuffer incomplete:', status)
+    }
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
   dispose() {
+    const gl = this.mapper.gl
+    gl.deleteFramebuffer(this.mainFbo)
+    gl.deleteTexture(this.mainTex)
+    gl.deleteRenderbuffer(this.mainDepthStencil)
     this.forest.dispose()
   }
 
@@ -101,6 +168,7 @@ class ArtworkContainer {
         ;(this.mapper as any).setResolution(width, height)
         this.forest.setResolution(width, height)
         this.bokeh.setResolution(vec2.fromValues(width, height))
+        this.resizeMainFramebuffer(width, height)
       }
     })
     resizeObserver.observe(canvas)
@@ -126,12 +194,49 @@ class ArtworkContainer {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
       // Render artwork in proj mode (render to screen, framebuffer = null)
-      if (!this.mapper.getPhotoMode() && !this.debugMode) {
+      if (!this.mapper.getPhotoMode() && !this.debugMode && this.mainFbo) {
+        const width = this.resolution[0]
+        const height = this.resolution[1]
+
+        // Bind main FBO
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.mainFbo)
+        gl.viewport(0, 0, width, height)
+        
+        // Clear color, depth and stencil
+        gl.clearColor(0.0, 0.0, 0.0, 1.0) // Clear to black
+        gl.clearStencil(0)
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
+
         // Normal mode: render with Forest (handles all trees with shadows and audio)
         const time = (Date.now() - this.startTime) / 1000 // seconds
         this.forest.update()
-        this.forest.render(time, null, this.debugMode)
-        this.bokeh.render(deltaTime, null)
+        
+        // Render forest to main FBO
+        this.forest.render(time, this.mainFbo, this.debugMode)
+        
+        // Render stencil for bokeh (to main FBO which has stencil attachment)
+        // Using the bokeh area imported from geometry
+        this.mapper.renderStencilForArea(bokeh, this.resolution)
+        
+        // Render bokeh to main FBO (will use stencil test against what we just drew)
+        this.bokeh.render(deltaTime, this.mainFbo)
+        
+        // === Final Pass (FXAA) to screen ===
+        if (this.finalProgram && this.quadVao) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null) // Draw to screen
+          gl.viewport(0, 0, width, height)
+          gl.clearColor(0.0, 0.0, 0.0, 1.0)
+          gl.clear(gl.COLOR_BUFFER_BIT)
+          
+          this.finalProgram.use()
+          
+          gl.activeTexture(gl.TEXTURE0)
+          gl.bindTexture(gl.TEXTURE_2D, this.mainTex)
+          gl.uniform1i(this.finalProgram.uniLocs.u_texture, 0)
+          gl.uniform2f(this.finalProgram.uniLocs.u_resolution, width, height)
+          
+          this.quadVao.draw()
+        }
       }
 
       // WebMapper automatically renders areas/handles in edit mode
