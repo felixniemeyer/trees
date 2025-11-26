@@ -2,6 +2,8 @@ import { defineConfig } from 'vite'
 import glsl from 'vite-plugin-glsl'
 import path from 'path'
 
+console.log("dirname:", __dirname); 
+
 export default defineConfig({
   plugins: [glsl({
     include: [
@@ -10,11 +12,13 @@ export default defineConfig({
       '**/*.frag',
       '**/*.vs',
       '**/*.fs'
-    ]
+    ],
+    root: path.resolve(__dirname, 'src'), 
   })],
   resolve: {
     alias: {
-      'utils': path.resolve(__dirname, 'src/utils')
+      'utils': path.resolve(__dirname, 'src/utils'),
+      'shaders': path.resolve(__dirname, 'src/shaders')
     }
   },
   server: {

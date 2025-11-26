@@ -8,7 +8,8 @@
     "skipLibCheck": true,
     "baseUrl": "src",
     "paths": {
-      "utils/*": ["utils/*"]
+      "utils/*": ["utils/*"],
+      "shaders/*": ["shaders/*"]
     },
 
     /* Bundler mode */

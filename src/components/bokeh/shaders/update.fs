@@ -30,7 +30,7 @@ layout(location=0) out vec4 pos;
 
 float hash(int x); 
 float snoise4d(vec4 v); 
-#include "../../noise.glsl"
+#include "./noise.glsl"
 
 // 5-octave 4D noise
 vec3 fbm4d(vec4 p) {

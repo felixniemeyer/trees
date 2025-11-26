@@ -1,9 +1,12 @@
 import './style.css'
 import './project-selection.css'
+
+import { vec2 } from 'gl-matrix'
+
 import { WebMapper } from 'web-mapper'
 import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
-import { Forest } from './forest'
+import { Forest } from './components/forest/index'
 import { BokehArtwork } from './components/bokeh';
 import { bokeh } from './geometry';
 import { Controls, Transports } from 'av-controls'
