@@ -132,11 +132,13 @@ void main() {
     feedbackColor.rgb *= u_tint;
     feedbackColor *= u_sustain;
     
-    // Additive blend: Input + Feedback
-    // Allows trails to persist on dark background
-    // u_mixFactor controls input brightness/contribution
-    fragColor = inputColor * u_mixFactor + feedbackColor;
+    // Scale the trails by u_mixFactor to control their prominence/brightness
+    feedbackColor *= u_mixFactor;
+
+    // Combine: Max of (fresh input) and (processed trails)
+    // This ensures fresh input is at full intensity where present, and trails show elsewhere
+    fragColor = max(inputColor, feedbackColor);
     
-    // Ensure alpha is handled reasonably (keep opaque usually)
+    fragColor.a = 1.0; // Ensure opaque
     fragColor.a = 1.0;
 }
