@@ -122,23 +122,26 @@ void main() {
     vec2 displacement = noise * u_noiseStrength * 0.01; // Scale factor 0.01 from original
     displacement *= u_aspect.yx; // Aspect correction on offset itself
     
-    vec2 feedbackUV = v_uv + displacement;
-    // Zoom in slightly to create feedback loop expansion
-    feedbackUV = (feedbackUV - 0.5) * 0.995 + 0.5;
+    vec2 displacedUV = v_uv + displacement;
     
-    vec4 feedbackColor = texture(u_feedbackTexture, feedbackUV);
+    // Sample displaced feedback (flow/spill)
+    vec4 displacedFeedback = texture(u_feedbackTexture, displacedUV);
     
-    // Apply sustain (fade out old feedback)
+    // Sample undisplaced feedback (staying put)
+    // This ensures pixels don't dim just because neighbors are dark ("push back")
+    vec4 undisplacedFeedback = texture(u_feedbackTexture, v_uv);
+    
+    // Combine: Max of staying put and incoming flow (scaled by mixFactor)
+    // mixFactor now controls "Transport Efficiency" or "Spill Speed"
+    // If 0: Static. If 1: Full flow.
+    vec4 feedbackColor = max(undisplacedFeedback, displacedFeedback * u_mixFactor);
+    
+    // Apply sustain and tint
     feedbackColor.rgb *= u_tint;
     feedbackColor *= u_sustain;
     
-    // Scale the trails by u_mixFactor to control their prominence/brightness
-    feedbackColor *= u_mixFactor;
-
-    // Combine: Max of (fresh input) and (processed trails)
-    // This ensures fresh input is at full intensity where present, and trails show elsewhere
+    // Combine with fresh input
     fragColor = max(inputColor, feedbackColor);
     
     fragColor.a = 1.0; // Ensure opaque
-    fragColor.a = 1.0;
 }
