@@ -3,6 +3,7 @@ import { GridArea, ProjRenderContext } from "web-mapper"
 import ShaderProgram from "web-mapper/src/utils/shader-program"
 import { RectVao } from "../../utils/basic-vaos"
 import { Controls } from "av-controls"
+import { RGBFaders } from "time-n-controls"
 
 import feedbackVs from "./shaders/feedback.vs"
 import feedbackFs from "./shaders/feedback.fs"
@@ -46,12 +47,14 @@ export class Feedback {
   ))
 
   private sustainControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('sustain', 0, 50, 20, 50, '#8a8'), 0.9, 0., 1.0, 3
+    new Controls.Base.Args('sustain', 60, 0, 20, 50, '#8a8'), 0.9, 0., 1.0, 3
   ))
 
   private mixFactorControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('mix factor', 20, 50, 20, 50, '#a8a'), 0.1, 0.0, 1.0, 2
+    new Controls.Base.Args('mix factor', 80, 0, 20, 50, '#a8a'), 0.1, 0.0, 1.0, 2
   ))
+
+  private tintFaders = new RGBFaders('tint', 0, 50, 60, 50, [1, 1, 1], 0, 1)
 
   unsubscribes: (() => void)[] = []
   requireAreaUpdate = true
@@ -200,6 +203,11 @@ export class Feedback {
     gl.uniform1f(this.program.uniLocs.u_sustain, this.sustainControl.value)
     gl.uniform1f(this.program.uniLocs.u_mixFactor, this.mixFactorControl.value)
     gl.uniform2fv(this.program.uniLocs.u_aspect, this.aspect)
+    
+    // Update and set tint
+    const sustain = Math.pow(0.5, deltaTime)
+    this.tintFaders.update(sustain)
+    gl.uniform3fv(this.program.uniLocs.u_tint, this.tintFaders.getValues())
 
     // Bind textures
     gl.activeTexture(gl.TEXTURE0)
@@ -249,6 +257,7 @@ export class Feedback {
       'noise strength': this.noiseStrengthControl,
       'sustain': this.sustainControl,
       'mix factor': this.mixFactorControl,
+      ...this.tintFaders.getControls(),
     }
     
     return new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(

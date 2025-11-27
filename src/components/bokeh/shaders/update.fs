@@ -76,7 +76,7 @@ void main() {
   zForce += 0.2 * invZ; 
 
   vec3 combinedVelo = noiseSpeed * noise * noiseAmount + drift;
-  combinedVelo.x += yWind;
+  combinedVelo.y += yWind;
   combinedVelo.z += zForce;
 
   // Convert world-space velocity to viewport-space and apply z-scaling

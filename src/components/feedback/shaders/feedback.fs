@@ -17,6 +17,7 @@ uniform float u_noiseScale;
 uniform float u_noiseStrength;
 uniform float u_sustain;
 uniform float u_mixFactor; // Acts as input intensity in additive mode
+uniform vec3 u_tint;
 
 // --- 3D Simplex Noise ---
 // From trees/src/components/bokeh/shaders/noise.glsl
@@ -128,6 +129,7 @@ void main() {
     vec4 feedbackColor = texture(u_feedbackTexture, feedbackUV);
     
     // Apply sustain (fade out old feedback)
+    feedbackColor.rgb *= u_tint;
     feedbackColor *= u_sustain;
     
     // Additive blend: Input + Feedback
