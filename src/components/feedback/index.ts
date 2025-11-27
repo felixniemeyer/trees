@@ -54,6 +54,10 @@ export class Feedback {
     new Controls.Base.Args('mix factor', 80, 0, 20, 50, '#a8a'), 0.1, 0.0, 1.0, 2
   ))
 
+  private decaySubtractControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
+    new Controls.Base.Args('decay subtract', 60, 50, 20, 50, '#f84'), 0.01, 0.0, 1.0, 3
+  ))
+
   private tintFaders = new RGBFaders('tint', 0, 50, 60, 50, [1, 1, 1], 0, 1)
 
   unsubscribes: (() => void)[] = []
@@ -150,7 +154,8 @@ export class Feedback {
 
     for (let i = 0; i < 2; i++) {
       gl.bindTexture(gl.TEXTURE_2D, this.textures[i])
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.feedbackResolution[0], this.feedbackResolution[1], 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
+      // Use RGBA16F and HALF_FLOAT for sufficient precision and better performance
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, this.feedbackResolution[0], this.feedbackResolution[1], 0, gl.RGBA, gl.HALF_FLOAT, null)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
@@ -206,6 +211,12 @@ export class Feedback {
     const faderValueSquared = Math.pow(this.sustainControl.value, 2);
     const frameSustain = Math.pow(faderValueSquared, deltaTime);
     gl.uniform1f(this.program.uniLocs.u_sustain, frameSustain)
+    
+    // Time-corrected subtract value
+    // Fader value is squared for exponential response
+    const subtractPerSec = Math.pow(this.decaySubtractControl.value, 2)
+    const frameSubtract = subtractPerSec * deltaTime
+    gl.uniform1f(this.program.uniLocs.u_decaySubtract, frameSubtract)
     
     gl.uniform1f(this.program.uniLocs.u_mixFactor, this.mixFactorControl.value)
     gl.uniform2fv(this.program.uniLocs.u_aspect, this.aspect)
@@ -270,6 +281,7 @@ export class Feedback {
       'noise strength': this.noiseStrengthControl,
       'sustain': this.sustainControl,
       'mix factor': this.mixFactorControl,
+      'decay subtract': this.decaySubtractControl,
       ...this.tintFaders.getControls(),
     }
     

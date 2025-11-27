@@ -17,6 +17,7 @@ uniform float u_noiseScale;
 uniform float u_noiseStrength;
 uniform float u_sustain;
 uniform float u_mixFactor; // Acts as input intensity in additive mode
+uniform float u_decaySubtract;
 uniform vec3 u_tint;
 
 // --- 3D Simplex Noise ---
@@ -140,7 +141,10 @@ void main() {
     feedbackColor.rgb *= u_tint;
     feedbackColor *= u_sustain;
     
-    // Combine with fresh input
+    // Apply constant subtraction decay (hard floor)
+    feedbackColor = max(vec4(0.0), feedbackColor - u_decaySubtract);
+    
+    // Combine: Max of (fresh input) and (processed trails)
     fragColor = max(inputColor, feedbackColor);
     
     fragColor.a = 1.0; // Ensure opaque
