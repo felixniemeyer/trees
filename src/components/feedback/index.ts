@@ -224,7 +224,7 @@ export class Feedback {
     this.currentTextureIndex = targetIndex
   }
 
-  draw(targetFramebuffer: WebGLFramebuffer | null) {
+  draw(targetFramebuffer: WebGLFramebuffer | null, useStencil: boolean = false) {
     const gl = this.gl
     
     gl.bindFramebuffer(gl.FRAMEBUFFER, targetFramebuffer)
@@ -235,7 +235,14 @@ export class Feedback {
     // For now, disable blend (opaque overwrite of the feedback area)
     gl.disable(gl.BLEND)
     gl.disable(gl.DEPTH_TEST)
-    gl.disable(gl.STENCIL_TEST)
+    
+    if (useStencil) {
+      gl.enable(gl.STENCIL_TEST)
+      gl.stencilFunc(gl.EQUAL, 1, 0xFF)
+      gl.stencilMask(0x00) // Don't write to stencil
+    } else {
+      gl.disable(gl.STENCIL_TEST)
+    }
 
     this.displayProgram.use()
     

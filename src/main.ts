@@ -293,10 +293,12 @@ class ArtworkContainer {
         // Note: We draw this BEFORE bokeh so bokeh is on top
         // But we need to bind mainFbo first
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.mainFbo)
-        this.feedback.draw(this.mainFbo)
         
-        // Render stencil for bokeh (to main FBO which has stencil attachment)
+        // Render stencil for bokeh/feedback area (to main FBO which has stencil attachment)
+        // We do this BEFORE drawing feedback so feedback is also masked
         this.mapper.renderStencilForArea(this.bokeh.area, this.resolution)
+        
+        this.feedback.draw(this.mainFbo, true)
         
         // Render bokeh to main FBO (will use stencil test against what we just drew)
         this.bokeh.render(deltaTime, this.mainFbo)
