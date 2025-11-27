@@ -47,7 +47,7 @@ export class Feedback {
   ))
 
   private sustainControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('sustain', 60, 0, 20, 50, '#8a8'), 0.9, 0., 1.0, 3
+    new Controls.Base.Args('sustain', 60, 0, 20, 50, '#8a8'), 0.9, 0.001, 1.0, 3
   ))
 
   private mixFactorControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
@@ -200,7 +200,13 @@ export class Feedback {
     // Uniforms
     gl.uniform1f(this.program.uniLocs.u_noiseScale, this.noiseFrequFader.value)
     gl.uniform1f(this.program.uniLocs.u_noiseStrength, this.noiseStrengthControl.value * 10.0) // Adjust scaling
-    gl.uniform1f(this.program.uniLocs.u_sustain, this.sustainControl.value)
+    
+    // Use time-corrected sustain: value represents fraction remaining after 1 second
+    // Apply squaring to the fader value for a more exponential response
+    const faderValueSquared = Math.pow(this.sustainControl.value, 2);
+    const frameSustain = Math.pow(faderValueSquared, deltaTime);
+    gl.uniform1f(this.program.uniLocs.u_sustain, frameSustain)
+    
     gl.uniform1f(this.program.uniLocs.u_mixFactor, this.mixFactorControl.value)
     gl.uniform2fv(this.program.uniLocs.u_aspect, this.aspect)
     
