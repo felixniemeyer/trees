@@ -3,7 +3,8 @@ import { GridArea, ProjRenderContext } from "web-mapper"
 import ShaderProgram from "utils/shader-program"
 import { RectVao } from "utils/basic-vaos"
 import { Controls } from "av-controls"
-import { RGBFaders } from "time-n-controls";
+import { SmoothFader, RGBFaders } from "time-n-controls";
+
 
 import updateVs from "./shaders/update.vs"
 import updateFs from "./shaders/update.fs"
@@ -110,7 +111,7 @@ export class BokehArtwork {
     )
   )
 
-  private zCenterFader = new Controls.Fader.Receiver(
+  private zCenterFader = new SmoothFader( 
     new Controls.Fader.Spec(
       new Controls.Base.Args('z center', 60, 50, 20, 50, '#28f'), 15, 5, 30, 2
     )
@@ -205,7 +206,7 @@ export class BokehArtwork {
     gl.uniform1i(updateUniLocs.inPosTex, 0)
     gl.uniform1f(updateUniLocs.driftAmount, this.driftAmountFader.value)
     gl.uniform1f(updateUniLocs.noiseAmount, this.noiseAmountFader.value * (1 + excitement * 2.5))
-    gl.uniform1f(updateUniLocs.zCenter, this.zCenterFader.value)
+    gl.uniform1f(updateUniLocs.zCenter, this.zCenterFader.getValue())
     gl.uniform1f(updateUniLocs.time, 0)
     
     // Setup render program uniforms
@@ -271,7 +272,7 @@ export class BokehArtwork {
       const data = new Float32Array(sqrtNumParticles * sqrtNumParticles * 4)
 
       // Initialize particles in viewport-normalized coordinates [-1,1] for XY, depth around zCenter for Z
-      const z = this.zCenterFader.value
+      const z = this.zCenterFader.getValue()
       const zSpread = z - 1 // Random Z spread around center
 
       for(let k = 0; k < data.length; k += 4) {
@@ -390,6 +391,7 @@ export class BokehArtwork {
     this.colorARgbFader.update(sustain)
     this.colorBRgbFader.update(sustain)
     this.intensityColorFader.update(sustain)
+    this.zCenterFader.update(sustain)
     
     const gl = this.gl
     
@@ -407,7 +409,7 @@ export class BokehArtwork {
     gl.uniform1f(updateUniLocs.xWind, xWind)
     gl.uniform1f(updateUniLocs.speed, this.speedFader.value ** 2)
     
-    gl.uniform1f(updateUniLocs.zCenter, this.zCenterFader.value)
+    gl.uniform1f(updateUniLocs.zCenter, this.zCenterFader.getValue())
     
     gl.uniform1f(updateUniLocs.zGravity, this.zGravityFader.value * deltaTime)
     
@@ -466,7 +468,7 @@ export class BokehArtwork {
     gl.uniform1f(renderUniLocs.invMaxDistance, 1 / ProjRenderContext.FAR_PLANE)
     gl.uniform1f(renderUniLocs.maxDistanceSlope, ProjRenderContext.FAR_PLANE)
 
-    const focusDistance = this.zCenterFader.value * (1 + this.focusDistanceFader.value)
+    const focusDistance = this.zCenterFader.getValue() * (1 + this.focusDistanceFader.value)
     gl.uniform1f(renderUniLocs.focusDistance, focusDistance)
     gl.uniform1f(renderUniLocs.particleSize, this.particleSizeFader.value)
     gl.uniform1f(renderUniLocs.maxFd, this.maxFdFader.value)
@@ -523,7 +525,7 @@ export class BokehArtwork {
       'speed boost factor': this.speedBoostFactorFader,
       'noise time scale': this.noiseTimeScaleFader,
       'sqrt num particles': this.sqrtNumParticlesFader,
-      'z center': this.zCenterFader,
+      'z center': this.zCenterFader.getControl(), 
       'z gravity': this.zGravityFader,
     }
     

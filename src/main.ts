@@ -13,6 +13,7 @@ import { ProjectSelection } from './project-selection'
 import IndexedDBStorage from '../../web-mapper/src/storage/indexdb'
 import { Forest } from './components/forest/index'
 import { BokehArtwork } from './components/bokeh';
+import { Feedback } from './components/feedback/index';
 import { bokeh } from './geometry';
 import { Controls, Transports } from 'av-controls'
 
@@ -31,6 +32,7 @@ class ArtworkContainer {
   mapper: WebMapper
   forest: Forest
   bokeh: BokehArtwork
+  feedback: Feedback
   storage: IndexedDBStorage
   isEditMode: boolean = true
   debugMode: number = 0
@@ -40,17 +42,25 @@ class ArtworkContainer {
   private mainFbo: WebGLFramebuffer | null = null
   private mainTex: WebGLTexture | null = null
   private mainDepthStencil: WebGLRenderbuffer | null = null
+  
+  // Intermediate framebuffer for Forest output (input to Feedback)
+  private forestFbo: WebGLFramebuffer | null = null
+  private forestTex: WebGLTexture | null = null
+  private forestDepth: WebGLRenderbuffer | null = null
+
   private resolution: vec2 = vec2.fromValues(1, 1)
   
   private finalProgram: ShaderProgram | null = null
   private quadVao: RectVao | null = null
 
-  constructor(mapper: WebMapper, forest: Forest, bokeh: BokehArtwork, storage: IndexedDBStorage) {
+  constructor(mapper: WebMapper, forest: Forest, bokeh: BokehArtwork, feedback: Feedback, storage: IndexedDBStorage) {
     this.mapper = mapper
     this.forest = forest
     this.bokeh = bokeh
+    this.feedback = feedback
     this.storage = storage
     this.initMainFramebuffer()
+    this.initForestFramebuffer()
     this.initFinalPass()
     
     // Initialize with current canvas size to avoid incomplete framebuffer
@@ -64,6 +74,13 @@ class ArtworkContainer {
     this.mainFbo = gl.createFramebuffer()
     this.mainTex = gl.createTexture()
     this.mainDepthStencil = gl.createRenderbuffer()
+  }
+
+  initForestFramebuffer() {
+    const gl = this.mapper.gl
+    this.forestFbo = gl.createFramebuffer()
+    this.forestTex = gl.createTexture()
+    this.forestDepth = gl.createRenderbuffer()
   }
   
   initFinalPass() {
@@ -83,7 +100,9 @@ class ArtworkContainer {
     ;(this.mapper as any).setResolution(width, height)
     this.forest.setResolution(width, height)
     this.bokeh.setResolution(vec2.fromValues(width, height))
+    this.feedback.setResolution(vec2.fromValues(width, height))
     this.resizeMainFramebuffer(width, height)
+    this.resizeForestFramebuffer(width, height)
   }
 
   resizeMainFramebuffer(width: number, height: number) {
@@ -121,12 +140,45 @@ class ArtworkContainer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
+  resizeForestFramebuffer(width: number, height: number) {
+    width = Math.floor(width)
+    height = Math.floor(height)
+    const gl = this.mapper.gl
+    
+    gl.bindTexture(gl.TEXTURE_2D, this.forestTex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    
+    gl.bindRenderbuffer(gl.RENDERBUFFER, this.forestDepth)
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height)
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.forestFbo)
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.forestTex, 0)
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.forestDepth)
+    
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error('Forest framebuffer incomplete:', status)
+    }
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+  }
+
   dispose() {
     const gl = this.mapper.gl
     gl.deleteFramebuffer(this.mainFbo)
     gl.deleteTexture(this.mainTex)
     gl.deleteRenderbuffer(this.mainDepthStencil)
+    
+    gl.deleteFramebuffer(this.forestFbo)
+    gl.deleteTexture(this.forestTex)
+    gl.deleteRenderbuffer(this.forestDepth)
+    
     this.forest.dispose()
+    this.feedback.dispose()
   }
 
   toggleEditMode() {
@@ -229,8 +281,19 @@ class ArtworkContainer {
         const time = (Date.now() - this.startTime) / 1000 // seconds
         this.forest.update()
         
-        // Render forest to main FBO
-        this.forest.render(time, this.mainFbo, this.debugMode)
+        // 1. Render forest to intermediate FBO (forestFbo)
+        this.forest.render(time, this.forestFbo, this.debugMode)
+
+        // 2. Update Feedback (reads forestTex, writes to internal ping-pong)
+        if (this.forestTex) {
+          this.feedback.render(deltaTime, this.forestTex)
+        }
+
+        // 3. Draw Feedback result to Main FBO (masked by viewport of feedback area)
+        // Note: We draw this BEFORE bokeh so bokeh is on top
+        // But we need to bind mainFbo first
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.mainFbo)
+        this.feedback.draw(this.mainFbo)
         
         // Render stencil for bokeh (to main FBO which has stencil attachment)
         this.mapper.renderStencilForArea(this.bokeh.area, this.resolution)
@@ -482,11 +545,17 @@ async function initializeProject(projectId: string) {
     mapper.projContext
   )
 
+  const feedback = new Feedback(
+    bokehArea,
+    mapper.gl,
+    mapper.projContext
+  )
+
   // Load trees
   await forest.loadTrees()
 
   // Create ArtworkContainer - coordinates WebMapper and Forest
-  artwork = new ArtworkContainer(mapper, forest, bokehArtwork, storage)
+  artwork = new ArtworkContainer(mapper, forest, bokehArtwork, feedback, storage)
 
   // Set up resize observer and render callback
   artwork.setupResizeObserver()
@@ -561,6 +630,7 @@ function setupControlPanel() {
   // Trees Tab - controls provided by Forest (no callbacks needed, Forest manages itself)
   const treesControls = artwork!.forest.getControls()
   const bokehControls = artwork!.bokeh.getControls()
+  const feedbackControls = artwork!.feedback.getControls()
 
   const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
     new Controls.Base.Args('Trees', 0, 0, 100, 100, '#333')
@@ -600,6 +670,7 @@ function setupControlPanel() {
   ), {
     'Trees': treesTab,
     'Bokeh': bokehControls,
+    'Feedback': feedbackControls,
     'Mapping': mappingTab,
   })
 
