@@ -11,10 +11,12 @@ uniform float u_time;
 uniform vec2 u_resolution;
 uniform vec4 u_inputTransform; // xy = scale, zw = offset
 
+uniform vec2 u_aspect; // symmetric aspect correction from original feedback shader
+
 uniform float u_noiseScale;
 uniform float u_noiseStrength;
 uniform float u_sustain;
-uniform float u_mixFactor;
+uniform float u_mixFactor; // Acts as input intensity in additive mode
 
 // --- 3D Simplex Noise ---
 // From trees/src/components/bokeh/shaders/noise.glsl
@@ -109,11 +111,15 @@ void main() {
     vec4 inputColor = texture(u_inputTexture, inputUV);
     
     // Sample previous feedback with 3D noise displacement
-    // We use time as the Z component for smooth animation
-    float n = snoise(vec3(v_uv * u_noiseScale, u_time));
+    // Calculate noise as in original_feedback.fs
+    vec2 lookupUv = v_uv * u_noiseScale * u_aspect;
+    vec2 noise = vec2(
+        snoise(vec3(lookupUv, u_time)),
+        snoise(vec3(lookupUv.yx, u_time) + 273.231)
+    );
     
-    // Use noise to rotate displacement vector or just offset
-    vec2 displacement = vec2(cos(n * 6.28), sin(n * 6.28)) * u_noiseStrength * 0.01;
+    vec2 displacement = noise * u_noiseStrength * 0.01; // Scale factor 0.01 from original
+    displacement *= u_aspect.yx; // Aspect correction on offset itself
     
     vec2 feedbackUV = v_uv + displacement;
     // Zoom in slightly to create feedback loop expansion
@@ -124,8 +130,10 @@ void main() {
     // Apply sustain (fade out old feedback)
     feedbackColor *= u_sustain;
     
-    // Mix new input with feedback
-    fragColor = mix(inputColor, feedbackColor, u_mixFactor);
+    // Additive blend: Input + Feedback
+    // Allows trails to persist on dark background
+    // u_mixFactor controls input brightness/contribution
+    fragColor = inputColor * u_mixFactor + feedbackColor;
     
     // Ensure alpha is handled reasonably (keep opaque usually)
     fragColor.a = 1.0;

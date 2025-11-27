@@ -166,9 +166,9 @@ export class BokehArtwork {
     }
   )
   
-  private xWindBaseFader = new Controls.Fader.Receiver(
+  private yWindBaseFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('x wind base', 80, 0, 20, 50, '#919'), 0.0, -1, 1, 3
+      new Controls.Base.Args('y wind base', 80, 0, 20, 50, '#919'), 0.0, -1, 1, 3
     )
   )
 
@@ -405,8 +405,8 @@ export class BokehArtwork {
     gl.uniform2fv(updateUniLocs.aspect, this.aspect)
     
     const excitement = 0
-    const xWind = this.xWindBaseFader.value * (1 + excitement * 1.5) 
-    gl.uniform1f(updateUniLocs.xWind, xWind)
+    const yWind = this.yWindBaseFader.value * (1 + excitement * 1.5) 
+    gl.uniform1f(updateUniLocs.yWind, yWind)
     gl.uniform1f(updateUniLocs.speed, this.speedFader.value ** 2)
     
     gl.uniform1f(updateUniLocs.zCenter, this.zCenterFader.getValue())
@@ -520,7 +520,7 @@ export class BokehArtwork {
     const physicsControls = {
       'drift amount': this.driftAmountFader,
       'noise amount': this.noiseAmountFader,
-      'x wind base': this.xWindBaseFader,
+      'x wind base': this.yWindBaseFader,
       'speed': this.speedFader,
       'speed boost factor': this.speedBoostFactorFader,
       'noise time scale': this.noiseTimeScaleFader,

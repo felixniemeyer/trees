@@ -16,6 +16,9 @@ export class Feedback {
   private viewportY = 0
   private viewportWidth = 1
   private viewportHeight = 1
+  
+  // Aspect ratio for viewport-normalized coordinates
+  private aspect = vec2.fromValues(1, 1)
 
   // Feedback system
   private textures: WebGLTexture[] = []
@@ -112,6 +115,11 @@ export class Feedback {
     this.viewportWidth = pixelWidth
     this.viewportHeight = pixelHeight
 
+    // Calculate aspect ratio: aspect.x = sqrt(width/height), aspect.y = 1/aspect.x
+    const aspectRatio = this.viewportWidth / this.viewportHeight
+    this.aspect[0] = Math.sqrt(aspectRatio)
+    this.aspect[1] = 1.0 / this.aspect[0]
+
     // Check if feedback resolution needs update
     const newRes = vec2.fromValues(this.viewportWidth, this.viewportHeight)
     if (!vec2.equals(this.feedbackResolution, newRes)) {
@@ -131,9 +139,15 @@ export class Feedback {
     this.textures = [gl.createTexture()!, gl.createTexture()!]
     this.framebuffers = [gl.createFramebuffer()!, gl.createFramebuffer()!]
 
+    const size = this.feedbackResolution[0] * this.feedbackResolution[1] * 4
+    const data = new Uint8Array(size)
+
+    // Disable UNPACK_FLIP_Y_WEBGL for Uint8Array upload to avoid warning/performance hit
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+
     for (let i = 0; i < 2; i++) {
       gl.bindTexture(gl.TEXTURE_2D, this.textures[i])
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.feedbackResolution[0], this.feedbackResolution[1], 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.feedbackResolution[0], this.feedbackResolution[1], 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
@@ -185,6 +199,7 @@ export class Feedback {
     gl.uniform1f(this.program.uniLocs.u_noiseStrength, this.noiseStrengthControl.value * 10.0) // Adjust scaling
     gl.uniform1f(this.program.uniLocs.u_sustain, this.sustainControl.value)
     gl.uniform1f(this.program.uniLocs.u_mixFactor, this.mixFactorControl.value)
+    gl.uniform2fv(this.program.uniLocs.u_aspect, this.aspect)
 
     // Bind textures
     gl.activeTexture(gl.TEXTURE0)
