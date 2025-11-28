@@ -353,7 +353,9 @@ export class Forest {
       indices.push(idx)
     }
     
-    this.permutationOffset = (this.permutationOffset + Math.floor(count * this.lightUpPercentage.value)) % this.treeCount
+    // Advance offset by at least 1, or by the number of trees corresponding to the percentage
+    const advanceStep = Math.max(1, Math.round(this.treeCount * this.lightUpPercentage.value))
+    this.permutationOffset = (this.permutationOffset + advanceStep) % this.treeCount
 
     this.bumps.push({
       start: this.clock.getBeat(),
