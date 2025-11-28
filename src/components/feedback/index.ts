@@ -3,7 +3,7 @@ import { GridArea, ProjRenderContext } from "web-mapper"
 import ShaderProgram from "web-mapper/src/utils/shader-program"
 import { RectVao } from "../../utils/basic-vaos"
 import { Controls } from "av-controls"
-import { RGBFaders } from "time-n-controls"
+import { RGBFaders, Clock } from "time-n-controls"
 
 import feedbackVs from "./shaders/feedback.vs"
 import feedbackFs from "./shaders/feedback.fs"
@@ -66,7 +66,8 @@ export class Feedback {
   constructor(
     private area: GridArea,
     private gl: WebGL2RenderingContext,
-    private renderContext: ProjRenderContext
+    private renderContext: ProjRenderContext,
+    private clock: Clock
   ) {
     this.program = new ShaderProgram(gl, feedbackVs, feedbackFs)
     this.displayProgram = new ShaderProgram(gl, feedbackVs, displayFs)
@@ -168,7 +169,9 @@ export class Feedback {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
-  render(deltaTime: number, inputTexture: WebGLTexture) {
+  render(inputTexture: WebGLTexture) {
+    const deltaTime = this.clock.getTickDeltaS()
+
     if (this.requireAreaUpdate) {
       this.updateViewport()
       this.requireAreaUpdate = false

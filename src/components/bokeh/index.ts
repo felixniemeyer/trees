@@ -283,6 +283,9 @@ export class BokehArtwork {
       }
       
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.renderFbos[renderIndex])
+      
+      // Disable UNPACK_FLIP_Y_WEBGL for Float32Array upload
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
 
       for(let textureIndex = 0; textureIndex < this.textureCount; textureIndex++) {
         gl.bindTexture(gl.TEXTURE_2D, this.renderTextures[renderIndex][textureIndex])

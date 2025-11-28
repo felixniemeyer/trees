@@ -16,6 +16,7 @@ import { BokehArtwork } from './components/bokeh';
 import { Feedback } from './components/feedback/index';
 import { bokeh } from './geometry';
 import { Controls, Transports } from 'av-controls'
+import { Clock } from 'time-n-controls'
 
 // Get canvas
 const canvas = document.getElementById('canvas') as HTMLCanvasElement
@@ -36,7 +37,40 @@ class ArtworkContainer {
   storage: IndexedDBStorage
   isEditMode: boolean = true
   debugMode: number = 0
-  startTime: number = Date.now()
+  
+  clock: Clock
+
+  // BPM and bar controls
+  bpmButtonHeight = 11
+  bpmButtonY = 100 - this.bpmButtonHeight
+
+  barCake = new Controls.Cake.Receiver(new Controls.Cake.Spec(
+    new Controls.Base.Args('bar', 0, this.bpmButtonY, 20, this.bpmButtonHeight, '#f0f'), 0, 1, 0, 2
+  ))
+
+  barSetPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+    new Controls.Base.Args('set bar start', 20, this.bpmButtonY, 20, this.bpmButtonHeight, '#fa5')
+  ), () => {
+    this.clock.setBar()
+  })
+
+  bpmTapLivePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+    new Controls.Base.Args('bpm tap live', 40, this.bpmButtonY, 20, this.bpmButtonHeight, '#aa3')
+  ), () => {
+    this.clock.bpmTap()
+  })
+
+  bpmTapAccuPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+    new Controls.Base.Args('bmp tap accu', 60, this.bpmButtonY, 20, this.bpmButtonHeight, '#0a9')
+  ), () => {
+    this.clock.bpmTap('accu', 0.8, 7, 1, 1)
+  })
+
+  bpmTapSlightPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+    new Controls.Base.Args('bpm tap adjust', 80, this.bpmButtonY, 20, this.bpmButtonHeight, '#a03')
+  ), () => {
+    this.clock.bpmTap('adjust', 1, 3, 0.15, 0.01)
+  })
 
   // Main offscreen framebuffer for compositing artworks with stencil support
   private mainFbo: WebGLFramebuffer | null = null
@@ -53,11 +87,12 @@ class ArtworkContainer {
   private finalProgram: ShaderProgram | null = null
   private quadVao: RectVao | null = null
 
-  constructor(mapper: WebMapper, forest: Forest, bokeh: BokehArtwork, feedback: Feedback, storage: IndexedDBStorage) {
+  constructor(mapper: WebMapper, forest: Forest, bokeh: BokehArtwork, feedback: Feedback, clock: Clock, storage: IndexedDBStorage) {
     this.mapper = mapper
     this.forest = forest
     this.bokeh = bokeh
     this.feedback = feedback
+    this.clock = clock
     this.storage = storage
     this.initMainFramebuffer()
     this.initForestFramebuffer()
@@ -243,14 +278,19 @@ class ArtworkContainer {
   }
 
   setupRenderCallback(joystickControl: any, joystickSensitivityFader: any) {
-    this.mapper.setRenderCallback((deltaTime) => {
+    this.mapper.setRenderCallback(() => { // Removed deltaTime argument here
+      // Update clock and bar cake
+      this.clock.tick() // This calls both deltaTime calculation and update()
+      this.barCake.sendValue(this.clock.getBar() % 1)
+      
+      const deltaTime = this.clock.getTickDeltaS() // Use internally calculated deltaTime
       const gl = this.mapper.gl
 
       // Joystick-based point movement
       if (joystickControl.x !== 0 || joystickControl.y !== 0) {
         const sensitivity = joystickSensitivityFader.value
-        const dx = joystickControl.x * sensitivity * deltaTime
-        const dy = joystickControl.y * sensitivity * deltaTime
+        const dx = joystickControl.x * sensitivity * this.clock.getTickDeltaS()
+        const dy = joystickControl.y * sensitivity * this.clock.getTickDeltaS()
 
         // Move selected point if one exists
         this.mapper.moveSelectedPoint(dx, dy)
@@ -278,7 +318,7 @@ class ArtworkContainer {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
 
         // Normal mode: render with Forest (handles all trees with shadows and audio)
-        const time = (Date.now() - this.startTime) / 1000 // seconds
+        const time = this.clock.getSeconds()
         this.forest.update()
         
         // 1. Render forest to intermediate FBO (forestFbo)
@@ -286,7 +326,7 @@ class ArtworkContainer {
 
         // 2. Update Feedback (reads forestTex, writes to internal ping-pong)
         if (this.forestTex) {
-          this.feedback.render(deltaTime, this.forestTex)
+          this.feedback.render(this.forestTex)
         }
 
         // 3. Draw Feedback result to Main FBO (masked by viewport of feedback area)
@@ -301,7 +341,7 @@ class ArtworkContainer {
         this.feedback.draw(this.mainFbo, true)
         
         // Render bokeh to main FBO (will use stencil test against what we just drew)
-        this.bokeh.render(deltaTime, this.mainFbo)
+        this.bokeh.render(this.clock.getTickDeltaS(), this.mainFbo)
         
         // === Final Pass (FXAA) to screen ===
         if (this.finalProgram && this.quadVao) {
@@ -531,6 +571,8 @@ async function initializeProject(projectId: string) {
   // Enable edit mode so we can manipulate points
   mapper.setEditMode(true)
 
+  const clock = new Clock()
+
   // Create Forest - handles tree loading, management, and rendering
   const forest = new Forest(
     mapper.gl,
@@ -550,14 +592,15 @@ async function initializeProject(projectId: string) {
   const feedback = new Feedback(
     bokehArea,
     mapper.gl,
-    mapper.projContext
+    mapper.projContext,
+    clock
   )
 
   // Load trees
   await forest.loadTrees()
 
   // Create ArtworkContainer - coordinates WebMapper and Forest
-  artwork = new ArtworkContainer(mapper, forest, bokehArtwork, feedback, storage)
+  artwork = new ArtworkContainer(mapper, forest, bokehArtwork, feedback, clock, storage)
 
   // Set up resize observer and render callback
   artwork.setupResizeObserver()
@@ -666,21 +709,26 @@ function setupControlPanel() {
   })
 
   // Create tabs
-  const tabs = new Controls.Tabs.Receiver(new Controls.Tabs.SpecWithoutControls(
-    new Controls.Base.Args('trees-controls', 0, 0, 100, 100, '#222'),
-    'Trees' // initially active tab
-  ), {
-    'Trees': treesTab,
-    'Bokeh': bokehControls,
-    'Feedback': feedbackControls,
-    'Mapping': mappingTab,
-  })
+    const mainTabs = new Controls.Tabs.Receiver(new Controls.Tabs.SpecWithoutControls(
+      new Controls.Base.Args('trees-controls', 0, 0, 100, 100 - (artwork!.bpmButtonHeight * 2), '#333'),
+      'Trees' // initially active tab
+    ), {
+      'Trees': treesTab,
+      'Bokeh': bokehControls,
+      'Feedback': feedbackControls,
+      'Mapping': mappingTab,
+    })
 
-  // Root panel
-  const rootPanel = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
-    new Controls.Base.Args('trees-app', 0, 0, 100, 100, '#111')
-  ), {
-    'tabs': tabs,
+    // Root panel
+    const rootPanel = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
+      new Controls.Base.Args('trees-app', 0, 0, 100, 100, '#111')
+    ), {
+      'tabs': mainTabs,
+      'bar cake': artwork!.barCake,
+    'bar set': artwork!.barSetPad,
+    'bmp tap live': artwork!.bpmTapLivePad,
+    'bpm tap accu': artwork!.bpmTapAccuPad,
+    'bpm tap slight': artwork!.bpmTapSlightPad,
   })
 
   // Set up transport
