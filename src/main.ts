@@ -35,7 +35,7 @@ class ArtworkContainer {
   bokeh: BokehArtwork
   feedback: Feedback
   storage: IndexedDBStorage
-  isEditMode: boolean = true
+  isEditMode: boolean = false
   debugMode: number = 0
   
   clock: Clock
@@ -94,6 +94,7 @@ class ArtworkContainer {
     this.feedback = feedback
     this.clock = clock
     this.storage = storage
+    this.isEditMode = mapper.getEditMode()
     this.initMainFramebuffer()
     this.initForestFramebuffer()
     this.initFinalPass()
@@ -548,6 +549,7 @@ async function initializeProject(projectId: string) {
   // Create WebMapper with the storage
   const mapper = new WebMapper(canvas, {
     artworkId: 'chirch',
+    initialEditMode: false,
     storage: {
       get: (key: string) => storage.loadArea(key),
       set: (key: string, value: any) => storage.saveArea(key, value),
@@ -567,9 +569,6 @@ async function initializeProject(projectId: string) {
   } else {
     console.error('Bokeh area has no points!')
   }
-
-  // Enable edit mode so we can manipulate points
-  mapper.setEditMode(true)
 
   const clock = new Clock()
 

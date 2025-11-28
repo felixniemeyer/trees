@@ -10,6 +10,8 @@ import updateVs from "./shaders/update.vs"
 import updateFs from "./shaders/update.fs"
 import renderVs from "./shaders/render.vs"
 import renderFs from "./shaders/render.fs"
+import copyVs from "./shaders/copy.vs"
+import copyFs from "./shaders/copy.fs"
 
 
 export class BokehArtwork {
@@ -24,6 +26,7 @@ export class BokehArtwork {
   
   private updateProgram: ShaderProgram
   private renderProgram: ShaderProgram
+  private copyProgram: ShaderProgram
   
   private cornerBuffer: WebGLBuffer | null = null
   private particleVao: WebGLVertexArrayObject | null = null
@@ -192,6 +195,7 @@ export class BokehArtwork {
   ) {
     this.updateProgram = new ShaderProgram(gl, updateVs, updateFs)
     this.renderProgram = new ShaderProgram(gl, renderVs, renderFs)
+    this.copyProgram = new ShaderProgram(gl, copyVs, copyFs)
 
     // Set derivative hint to potentially improve fragment precision
     gl.hint(gl.FRAGMENT_SHADER_DERIVATIVE_HINT, gl.NICEST)
@@ -264,11 +268,24 @@ export class BokehArtwork {
   setSqrtNumParticles(sqrtNumParticles: number) {
     const gl = this.gl
     
+    // Store old resources
+    const oldSize = this.sqrtNumParticles
+    const oldTextures = this.renderTextures
+    const oldFbos = this.renderFbos
+    
     this.sqrtNumParticles = sqrtNumParticles
     this.numParticles = sqrtNumParticles * sqrtNumParticles
     
-    // Initialize particle data
+    // Create new arrays
+    this.renderTextures = []
+    this.renderFbos = []
+    
+    // Initialize new particle data (random fill)
+    // This ensures that if we expand, the new area is valid random data
     for(let renderIndex = 0; renderIndex < 2; renderIndex++) {
+      this.renderFbos[renderIndex] = gl.createFramebuffer()
+      this.renderTextures[renderIndex] = []
+      
       const data = new Float32Array(sqrtNumParticles * sqrtNumParticles * 4)
 
       // Initialize particles in viewport-normalized coordinates [-1,1] for XY, depth around zCenter for Z
@@ -276,9 +293,9 @@ export class BokehArtwork {
       const zSpread = z - 1 // Random Z spread around center
 
       for(let k = 0; k < data.length; k += 4) {
-        data[k + 0] = (Math.random() * 2 - 1) // x: viewport-normalized [-1, 1]
-        data[k + 1] = (Math.random() * 2 - 1) // y: viewport-normalized [-1, 1]
-        data[k + 2] = z + (Math.random() * 2 - 1) * zSpread // z: depth around center
+        data[k + 0] = (Math.random() * 2 - 1)
+        data[k + 1] = (Math.random() * 2 - 1)
+        data[k + 2] = z + (Math.random() * 2 - 1) * zSpread
         data[k + 3] = 0
       }
       
@@ -288,37 +305,61 @@ export class BokehArtwork {
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
 
       for(let textureIndex = 0; textureIndex < this.textureCount; textureIndex++) {
-        gl.bindTexture(gl.TEXTURE_2D, this.renderTextures[renderIndex][textureIndex])
+        const tex = gl.createTexture()
+        this.renderTextures[renderIndex][textureIndex] = tex
+        
+        gl.bindTexture(gl.TEXTURE_2D, tex)
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, sqrtNumParticles, sqrtNumParticles, 0, gl.RGBA, gl.FLOAT, data)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + textureIndex, gl.TEXTURE_2D, this.renderTextures[renderIndex][textureIndex], 0)
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + textureIndex, gl.TEXTURE_2D, tex, 0)
       }
 
       // Check framebuffer status
       const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
       if (fbStatus !== gl.FRAMEBUFFER_COMPLETE) {
-        console.error(`Framebuffer ${renderIndex} incomplete:`, fbStatus, {
-          FRAMEBUFFER_INCOMPLETE_ATTACHMENT: gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
-          FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT: gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT,
-          FRAMEBUFFER_INCOMPLETE_DIMENSIONS: gl.FRAMEBUFFER_INCOMPLETE_DIMENSIONS,
-          FRAMEBUFFER_UNSUPPORTED: gl.FRAMEBUFFER_UNSUPPORTED,
-          FRAMEBUFFER_INCOMPLETE_MULTISAMPLE: gl.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE
-        })
-      } else {
+        console.error(`Framebuffer ${renderIndex} incomplete:`, fbStatus)
       }
-      
-      this.updateProgram.use()
-      gl.uniform1i(this.updateProgram.uniLocs.sqrtNumParticles, sqrtNumParticles)
-      gl.uniform1f(this.updateProgram.uniLocs.invSqrtNumParticles, 1 / sqrtNumParticles)
-      const numParticles = sqrtNumParticles ** 2
-      gl.uniform1i(this.updateProgram.uniLocs.numParticles, numParticles)
-      gl.uniform1f(this.updateProgram.uniLocs.invNumParticles, 1 / numParticles)
     }
     
+    // Copy old data if it exists
+    // We draw the old texture into the new FBO
+    // Since we initialized with random data, we only need to overwrite the overlapping region
+    if (oldTextures.length > 0) {
+      this.copyProgram.use()
+      gl.disable(gl.BLEND)
+      gl.disable(gl.DEPTH_TEST)
+      gl.disable(gl.STENCIL_TEST)
+      
+      const copySize = Math.min(oldSize, sqrtNumParticles)
+      gl.viewport(0, 0, copySize, copySize)
+      
+      for(let renderIndex = 0; renderIndex < 2; renderIndex++) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.renderFbos[renderIndex])
+        
+        // Assume textureCount is 1 for now, or just copy the first one (positions)
+        // If we have velocity texture later, loop here
+        gl.activeTexture(gl.TEXTURE0)
+        gl.bindTexture(gl.TEXTURE_2D, oldTextures[renderIndex][0])
+        gl.uniform1i(this.copyProgram.uniLocs.u_texture, 0)
+        
+        this.rectVao.draw()
+      }
+      
+      // Cleanup old resources
+      oldTextures.forEach(arr => arr.forEach(t => gl.deleteTexture(t)))
+      oldFbos.forEach(f => gl.deleteFramebuffer(f))
+    }
+    
+    // Update uniforms
+    this.updateProgram.use()
+    gl.uniform1i(this.updateProgram.uniLocs.sqrtNumParticles, sqrtNumParticles)
+    gl.uniform1f(this.updateProgram.uniLocs.invSqrtNumParticles, 1 / sqrtNumParticles)
     const numParticles = sqrtNumParticles ** 2
+    gl.uniform1i(this.updateProgram.uniLocs.numParticles, numParticles)
+    gl.uniform1f(this.updateProgram.uniLocs.invNumParticles, 1 / numParticles)
     
     this.renderProgram.use()
     gl.uniform1i(this.renderProgram.uniLocs.sqrtNumParticles, sqrtNumParticles)

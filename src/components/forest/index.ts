@@ -76,7 +76,7 @@ export class Forest {
   private shadowOffsetFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
       new Controls.Base.Args('shadow offset', 80, 15, 20, 30, '#58a'),
-      0.0, -0.1, 0.4, 2
+      0.2, -0.1, 0.4, 2
     )
   )
 
