@@ -184,6 +184,8 @@ export class BokehArtwork {
   
   private currentRenderIndex = 0
   private blinkPhase = 0
+  
+  private pendingParticleUpdate: number | null = null
 
   unsubscribes: (() => void)[] = []
   requireAreaUpdate = true
@@ -251,7 +253,7 @@ export class BokehArtwork {
     gl.bindVertexArray(null)
     
     // Initialize particles
-    this.setSqrtNumParticles(this.sqrtNumParticles)
+    this.applyParticleUpdate(this.sqrtNumParticles, true)
 
     // Subscribe to area changes
     let unsubscribe = this.area.subscribe(() => {
@@ -266,6 +268,14 @@ export class BokehArtwork {
   }
   
   setSqrtNumParticles(sqrtNumParticles: number) {
+    if (sqrtNumParticles === this.sqrtNumParticles) {
+      return
+    }
+    // Defer update to render loop
+    this.pendingParticleUpdate = sqrtNumParticles
+  }
+
+  private applyParticleUpdate(sqrtNumParticles: number, initialize: boolean = false) {
     const gl = this.gl
     
     // Store old resources
@@ -327,7 +337,7 @@ export class BokehArtwork {
     // Copy old data if it exists
     // We draw the old texture into the new FBO
     // Since we initialized with random data, we only need to overwrite the overlapping region
-    if (oldTextures.length > 0) {
+    if (!initialize) {
       this.copyProgram.use()
       gl.disable(gl.BLEND)
       gl.disable(gl.DEPTH_TEST)
@@ -420,6 +430,11 @@ export class BokehArtwork {
   }
   
   render(deltaTime: number, targetFramebuffer: WebGLFramebuffer | null) {
+    if (this.pendingParticleUpdate !== null) {
+      this.applyParticleUpdate(this.pendingParticleUpdate)
+      this.pendingParticleUpdate = null
+    }
+
     if (this.requireAreaUpdate) {
       this.updateViewport()
       this.requireAreaUpdate = false
