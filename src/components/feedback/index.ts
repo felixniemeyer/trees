@@ -147,16 +147,19 @@ export class Feedback {
     this.textures = [gl.createTexture()!, gl.createTexture()!]
     this.framebuffers = [gl.createFramebuffer()!, gl.createFramebuffer()!]
 
-    const size = this.feedbackResolution[0] * this.feedbackResolution[1] * 4
-    const data = new Uint8Array(size)
+    // Create zero-filled buffer for initialization
+    const width = this.feedbackResolution[0]
+    const height = this.feedbackResolution[1]
+    const data = new Float32Array(width * height * 4)
 
-    // Disable UNPACK_FLIP_Y_WEBGL for Uint8Array upload to avoid warning/performance hit
+    // Disable UNPACK_FLIP_Y_WEBGL for Float32Array upload to avoid warning/performance hit
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
 
     for (let i = 0; i < 2; i++) {
       gl.bindTexture(gl.TEXTURE_2D, this.textures[i])
       // Use RGBA16F and HALF_FLOAT for sufficient precision and better performance
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, this.feedbackResolution[0], this.feedbackResolution[1], 0, gl.RGBA, gl.HALF_FLOAT, null)
+      // Upload zero data to avoid lazy initialization warning
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.FLOAT, data)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)

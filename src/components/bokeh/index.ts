@@ -91,7 +91,7 @@ export class BokehArtwork {
   
   private speedFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('speed', 60, 0, 20, 50, '#419'), 0.25, 0, 2, 2
+      new Controls.Base.Args('speed', 60, 0, 20, 50, '#419'), 0.25, 0, 1.5, 2
     )
   )
   
