@@ -579,7 +579,8 @@ async function initializeProject(projectId: string) {
     storage,
     'chirch',
     mapper.projContext,
-    [canvas.width, canvas.height]
+    [canvas.width, canvas.height],
+    clock
   )
 
   const bokehArtwork = new BokehArtwork(
@@ -676,10 +677,6 @@ function setupControlPanel() {
   const bokehControls = artwork!.bokeh.getControls()
   const feedbackControls = artwork!.feedback.getControls()
 
-  const treesTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
-    new Controls.Base.Args('Trees', 0, 0, 100, 100, '#333')
-  ), treesControls)
-
   // Mapping Tab
   const mappingTab = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
     new Controls.Base.Args('Mapping', 0, 0, 100, 100, '#333')
@@ -712,7 +709,7 @@ function setupControlPanel() {
       new Controls.Base.Args('trees-controls', 0, 0, 100, 100 - (artwork!.bpmButtonHeight * 2), '#333'),
       'Trees' // initially active tab
     ), {
-      'Trees': treesTab,
+      'Trees': treesControls,
       'Bokeh': bokehControls,
       'Feedback': feedbackControls,
       'Mapping': mappingTab,

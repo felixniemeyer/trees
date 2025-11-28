@@ -458,7 +458,7 @@ export class TriangleStripArtworkRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.DYNAMIC_DRAW)
   }
 
-  render(time: number, _targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5, debugMode: number = 0) {
+  render(time: number, _targetFramebuffer: WebGLFramebuffer | null, depth: number = 0.5, boost: number = 0.0, debugMode: number = 0) {
     if (this.vertexCount < 2 || !this.photoTexture) return
 
     const gl = this.gl
@@ -479,6 +479,7 @@ export class TriangleStripArtworkRenderer {
     gl.uniform1f(this.program.uniLocs.time, time)
     gl.uniform1f(this.program.uniLocs.u_depth, isSelected ? 0.0 : depth)
     gl.uniform1f(this.program.uniLocs.u_selected, isSelected ? 1.0 : 0.0)
+    gl.uniform1f(this.program.uniLocs.u_boost, boost)
     gl.uniform1i(this.program.uniLocs.u_debugMode, debugMode)
 
     // Bind generated texture (for now it's empty, but structure is ready)

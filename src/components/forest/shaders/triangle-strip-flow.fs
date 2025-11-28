@@ -11,6 +11,7 @@ uniform sampler2D photoTexture;
 uniform float time;  // Time for scrolling animation
 uniform float u_depth;  // Depth value for this tree
 uniform float u_selected;  // 1.0 if selected, 0.0 otherwise
+uniform float u_boost; // Brightness boost from animation
 uniform int u_debugMode;  // 0 = off, 1 = vertex ID colors, 2 = every vertex different color
 
 // Output
@@ -54,6 +55,9 @@ void main() {
 
   // Mix with white if selected (50% white mix)
   finalColor = mix(finalColor, vec3(1.0), u_selected * 0.5);
+
+  // Apply brightness boost
+  finalColor = finalColor * (1.0 + u_boost);
 
   // Output RGB with depth in alpha channel
   fragColor = vec4(finalColor, u_depth);

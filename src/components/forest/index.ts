@@ -7,7 +7,15 @@ import shadowProcessFs from './shaders/shadow-process.fs'
 import compositeVs from "./shaders/forest-composite.vs"
 import compositeFs from './shaders/composite.fs'
 import { Controls } from 'av-controls'
+import { Clock, TapPatternPairWithAmountFader } from 'time-n-controls'
 import type IndexedDBStorage from 'web-mapper/src/storage/indexdb'
+
+interface Bump {
+  start: number
+  size: number
+  duration: number
+  indices: number[]
+}
 
 export class Forest {
   private gl: WebGL2RenderingContext
@@ -20,6 +28,12 @@ export class Forest {
   private treeDepths: number[]
   private resolution: [number, number]
   private treeCount: number = 0
+  private clock: Clock
+
+  // Animation state
+  private bumps: Bump[] = []
+  private permutation: number[] = []
+  private permutationOffset = 0
 
   // Render targets
   private treesTexture: WebGLTexture
@@ -94,7 +108,36 @@ export class Forest {
     )
   )
 
+  private lightUpPercentage = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('light up %', 20, 0, 20, 50, '#f84'),
+      0.1, 0, 1, 2
+    )
+  )
+
+  private bumpDuration = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('duration', 40, 0, 20, 50, '#f84'),
+      1.0, 0.1, 5.0, 2
+    )
+  )
+
+  private bumpSteepness = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('steepness', 60, 0, 20, 50, '#f84'),
+      14.0, 1.0, 50.0, 2
+    )
+  )
+
+  private bumpVersatz = new Controls.Fader.Receiver(
+    new Controls.Fader.Spec(
+      new Controls.Base.Args('versatz', 80, 0, 20, 50, '#f84'),
+      0.0, 0.0, 1.0, 2
+    )
+  )
+
   // Pads and toggles - initialized in getControls() because they need callbacks
+  private lightUpTap!: TapPatternPairWithAmountFader // Initialized in constructor
   private audioToggle!: Controls.Switch.Receiver
   private addTreePad!: Controls.Pad.Receiver
   private removeTreePad!: Controls.Pad.Receiver
@@ -114,13 +157,22 @@ export class Forest {
     storage: IndexedDBStorage,
     _artworkId: string,
     renderContext: ProjRenderContext,
-    resolution: [number, number]
+    resolution: [number, number],
+    clock: Clock
   ) {
     this.gl = gl
     this.webMapper = webMapper
     this.storage = storage
     this.renderContext = renderContext
     this.resolution = resolution
+    this.clock = clock
+
+    // Initialize animation controls that require clock
+    this.lightUpTap = new TapPatternPairWithAmountFader(
+      'light up', 0, 0, 20, 50, '#f84',
+      this.clock,
+      (velocity: number) => this.triggerLightUp(velocity)
+    )
 
     // Areas will be populated by loadTrees()
     this.areas = []
@@ -251,6 +303,14 @@ export class Forest {
     // Resize audio arrays
     this.audioOffsets = new Array(this.areas.length).fill(0)
     this.smoothedEnergies = new Array(this.areas.length).fill(0)
+
+    // Update permutation for animation
+    this.permutation = Array.from({ length: this.areas.length }, (_, i) => i)
+    // Shuffle permutation
+    for (let i = this.permutation.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [this.permutation[i], this.permutation[j]] = [this.permutation[j]!, this.permutation[i]!]
+    }
   }
 
   async addTree() {
@@ -286,6 +346,27 @@ export class Forest {
     this.updateRenderersAndArrays()
 
     console.log(`Removed tree. Total: ${this.treeCount}`)
+  }
+
+  private triggerLightUp(velocity: number) {
+    if (this.treeCount === 0) return
+
+    const count = Math.round(0.5 + this.lightUpPercentage.value * (this.treeCount - 0.5))
+    const indices: number[] = []
+    
+    for (let i = 0; i < count; i++) {
+      const idx = this.permutation[(this.permutationOffset + i) % this.treeCount]!
+      indices.push(idx)
+    }
+    
+    this.permutationOffset = (this.permutationOffset + Math.floor(count * this.lightUpPercentage.value)) % this.treeCount
+
+    this.bumps.push({
+      start: this.clock.getBeat(),
+      size: velocity * this.lightUpTap.amountFader.value,
+      duration: this.bumpDuration.value,
+      indices: indices
+    })
   }
 
   setResolution(width: number, height: number) {
@@ -482,13 +563,67 @@ export class Forest {
     gl.enable(gl.DEPTH_TEST)
     gl.depthFunc(gl.LESS)
 
+    // Calculate boosts from bumps
+    const currentBeat = this.clock.getBeat()
+    // Clean up old bumps
+    const maxDuration = 10 // Safety margin
+    this.bumps = this.bumps.filter(b => currentBeat - b.start < b.duration + maxDuration)
+
+    const treeBoosts = new Float32Array(this.treeCount)
+    const s = this.bumpSteepness.value
+    const versatz = this.bumpVersatz.value
+
+    for (const bump of this.bumps) {
+      const bumpTime = currentBeat - bump.start
+      if (bumpTime < 0) continue // Future bump?
+
+      // Distribute boost across selected trees with optional versatz
+      // Since we don't have strict ordering in indices for versatz, assume index order in the list is the sequence
+      const invCount = bump.indices.length > 1 ? 1.0 / (bump.indices.length - 1) : 0
+      
+      for (let i = 0; i < bump.indices.length; i++) {
+        const p = i * invCount
+        // Apply versatz: each tree starts later
+        const treeDelay = p * versatz * bump.duration
+        const t = (bumpTime - treeDelay) / bump.duration
+        
+        if (t >= 0 && t <= 1) {
+          // Bump function: xs = x * s; y = xs * (1-x) / (xs+1)^2 scaled to peak at 1 approx?
+          // Actually the function y = xs * (1-x) / (xs+1)^2 is small. 
+          // Let's use standard simpler bump: sin(pi*t)^s ? No.
+          // Let's use the provided reference logic:
+          // xs = x * s
+          // y = xs * (1 - x) / (xs + 1)^2
+          // Max value of this function depends on s.
+          // At s=14, max is around 0.06. This is small.
+          // We need to normalize or scale it?
+          // The reference code multiplies by bump.size (velocity * 2).
+          // And "bumpSizeFactor".
+          // If I want peak 1, I should normalize.
+          // For simplicity, let's use a known normalized bump: t^2 * (1-t)^2 * 16 (Bell shape)
+          // Or Attack/Decay.
+          // Let's stick to reference math but maybe scale it up if needed. 
+          // Let's try multiplying by 20 to get useful range if s=14.
+          
+          const xs = t * s
+          const xsp1 = xs + 1
+          const y = xs * (1 - t) / (xsp1 * xsp1)
+          
+          // Scale factor to make it visible (approx 15-20x for s=14)
+          const scale = 20.0 
+          treeBoosts[bump.indices[i]!] += Math.max(0, y * scale) * bump.size
+        }
+      }
+    }
+
     // Render phase: Render all trees to our framebuffer
     for (let i = 0; i < this.renderers.length; i++) {
       // Base time animation
       const baseTime = time * this.treeSpeeds[i]! * 0.1
       // Add audio offset if audio is enabled
       const totalTime = baseTime + (this.audioEnabled ? this.audioOffsets[i]! : 0)
-      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, debugMode)
+      // Pass boost
+      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, this.treeBoosts ? this.treeBoosts[i] : treeBoosts[i], debugMode)
     }
 
     gl.disable(gl.DEPTH_TEST)
@@ -860,7 +995,8 @@ export class Forest {
       }
     )
 
-    return {
+    // Organize into tabs
+    const treesControls = {
       'add tree': this.addTreePad,
       'remove tree': this.removeTreePad,
       'move up': this.moveTreeUpPad,
@@ -881,6 +1017,30 @@ export class Forest {
       'audio smoothing': this.audioSmoothingFader,
       'audio reactivity': this.audioToggle,
     }
+
+    const treesGroup = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
+      new Controls.Base.Args('trees-main', 0, 0, 100, 100, '#333')
+    ), treesControls)
+
+    const animationControls = {
+      ...this.lightUpTap.getControls(),
+      'light up %': this.lightUpPercentage,
+      'duration': this.bumpDuration,
+      'steepness': this.bumpSteepness,
+      'versatz': this.bumpVersatz,
+    }
+
+    const animationGroup = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
+      new Controls.Base.Args('trees-anim', 0, 0, 100, 100, '#333')
+    ), animationControls)
+
+    return new Controls.Tabs.Receiver(new Controls.Tabs.SpecWithoutControls(
+      new Controls.Base.Args('forest', 0, 0, 100, 100, '#f84'),
+      'Trees'
+    ), {
+      'Trees': treesGroup,
+      'Animation': animationGroup
+    })
   }
 
   // Audio methods
