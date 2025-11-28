@@ -1,4 +1,5 @@
 import { TriangleStripArtworkRenderer } from './artwork-renderer'
+import { Tree } from './tree'
 import ShaderProgram from 'web-mapper/src/utils/shader-program'
 import { TriangleStripArea, type WebMapper, type ProjRenderContext, Point } from 'web-mapper'
 import { vec2 } from 'gl-matrix'
@@ -22,10 +23,7 @@ export class Forest {
   private webMapper: WebMapper
   private storage: IndexedDBStorage
   private renderContext: ProjRenderContext
-  private areas: TriangleStripArea[]
-  private renderers: TriangleStripArtworkRenderer[]
-  private treeSpeeds: number[]
-  private treeDepths: number[]
+  private trees: Tree[] = []
   private resolution: [number, number]
   private treeCount: number = 0
   private clock: Clock
@@ -50,8 +48,6 @@ export class Forest {
   private quadVAO: WebGLVertexArrayObject
 
   // Audio reactivity
-  private audioOffsets: number[] = []
-  private smoothedEnergies: number[] = []
   private lastFrameTime: number = performance.now()
   private audioContext: AudioContext | null = null
   private analyser: AnalyserNode | null = null
@@ -94,19 +90,22 @@ export class Forest {
     )
   )
 
-  private audioScaleFader = new Controls.Fader.Receiver(
+  private speedScaleFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('audio scale', 60, 60, 20, 15, '#a85'),
-      0.5, 0, 1, 2
+      new Controls.Base.Args('speed scale', 60, 60, 20, 30, '#a85'),
+      1.0, 0, 2, 2
     )
   )
 
-  private audioSmoothingFader = new Controls.Fader.Receiver(
+  private speedPulseFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('audio smoothing', 80, 60, 20, 15, '#a85'),
-      0.3, 0, 1, 2
+      new Controls.Base.Args('speed pulse', 80, 60, 20, 30, '#a85'),
+      0.0, 0, 1, 2
     )
   )
+
+  // Animation Controls
+  private lightUpTap!: TapPatternPairWithAmountFader // Initialized in constructor
 
   private lightUpPercentage = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
@@ -136,8 +135,6 @@ export class Forest {
     )
   )
 
-  // Pads and toggles - initialized in getControls() because they need callbacks
-  private lightUpTap!: TapPatternPairWithAmountFader // Initialized in constructor
   private audioToggle!: Controls.Switch.Receiver
   private addTreePad!: Controls.Pad.Receiver
   private removeTreePad!: Controls.Pad.Receiver
@@ -147,6 +144,7 @@ export class Forest {
   private previousTreePad!: Controls.Pad.Receiver
   private nextTreePad!: Controls.Pad.Receiver
   private deselectTreePad!: Controls.Pad.Receiver
+  private randomizeSpeedsPad!: Controls.Pad.Receiver
   private increaseOctavesPad!: Controls.Pad.Receiver
   private decreaseOctavesPad!: Controls.Pad.Receiver
   private shuffleFrequenciesPad!: Controls.Pad.Receiver
@@ -174,13 +172,8 @@ export class Forest {
       (velocity: number) => this.triggerLightUp(velocity)
     )
 
-    // Areas will be populated by loadTrees()
-    this.areas = []
-    this.renderers = []
-    this.treeSpeeds = []
-    this.treeDepths = []
-    this.audioOffsets = []
-    this.smoothedEnergies = []
+    // Trees will be populated by loadTrees()
+    this.trees = []
 
     // Create render targets
     this.treesTexture = this.createTexture()
@@ -205,15 +198,25 @@ export class Forest {
 
     // Load each tree
     for (let i = 0; i < this.treeCount; i++) {
-      const tree = await this.webMapper.loadOrCreateArea(`tree-${i}`, () => this.createDefaultTree(i))
-      this.areas.push(tree as TriangleStripArea)
-
+      const area = await this.webMapper.loadOrCreateArea(`tree-${i}`, () => this.createDefaultTree(i))
+      const treeArea = area as TriangleStripArea
+      
       // Initialize metadata if needed
-      this.initializeTreeMetadata(tree as TriangleStripArea, i)
+      this.initializeTreeMetadata(treeArea, i)
+      
+      // Create Tree wrapper
+      const tree = new Tree(
+        treeArea, 
+        this.gl, 
+        this.renderContext, 
+        this.webMapper, 
+        vec2.fromValues(this.resolution[0], this.resolution[1])
+      )
+      this.trees.push(tree)
     }
 
-    // Update renderers and arrays
-    this.updateRenderersAndArrays()
+    // Initialize permutation
+    this.updatePermutation()
 
     console.log(`Forest: Loaded ${this.treeCount} tree(s)`)
   }
@@ -285,27 +288,9 @@ export class Forest {
     }
   }
 
-  private updateRenderersAndArrays() {
-    // Recreate renderers
-    this.renderers = this.areas.map(area =>
-      new TriangleStripArtworkRenderer(area, this.gl, this.renderContext, this.webMapper)
-    )
-
-    // Set resolution for all renderers
-    this.renderers.forEach(renderer => {
-      renderer.setResolution(vec2.fromValues(this.resolution[0], this.resolution[1]))
-    })
-
-    // Update speeds and depths arrays
-    this.treeSpeeds = this.areas.map(area => area.metadata!.speed)
-    this.treeDepths = this.areas.map(area => area.metadata!.depth)
-
-    // Resize audio arrays
-    this.audioOffsets = new Array(this.areas.length).fill(0)
-    this.smoothedEnergies = new Array(this.areas.length).fill(0)
-
+  private updatePermutation() {
     // Update permutation for animation
-    this.permutation = Array.from({ length: this.areas.length }, (_, i) => i)
+    this.permutation = Array.from({ length: this.trees.length }, (_, i) => i)
     // Shuffle permutation
     for (let i = this.permutation.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -315,14 +300,23 @@ export class Forest {
 
   async addTree() {
     const index = this.treeCount
-    const tree = await this.webMapper.loadOrCreateArea(`tree-${index}`, () => this.createDefaultTree(index))
-    this.areas.push(tree as TriangleStripArea)
-    this.initializeTreeMetadata(tree as TriangleStripArea, index)
+    const area = await this.webMapper.loadOrCreateArea(`tree-${index}`, () => this.createDefaultTree(index))
+    const treeArea = area as TriangleStripArea
+    this.initializeTreeMetadata(treeArea, index)
+
+    const tree = new Tree(
+      treeArea, 
+      this.gl, 
+      this.renderContext, 
+      this.webMapper, 
+      vec2.fromValues(this.resolution[0], this.resolution[1])
+    )
+    this.trees.push(tree)
 
     this.treeCount++
     await this.storage.saveArea('tree-count', this.treeCount)
 
-    this.updateRenderersAndArrays()
+    this.updatePermutation()
 
     console.log(`Added tree ${index}. Total: ${this.treeCount}`)
   }
@@ -334,16 +328,17 @@ export class Forest {
     }
 
     const index = this.treeCount - 1
-    const tree = this.areas.pop()!
+    const tree = this.trees.pop()!
 
     // Remove from WebMapper and storage
     await this.storage.saveArea(`tree-${index}`, null)
-    this.webMapper.removeArea(tree)
+    this.webMapper.removeArea(tree.area)
+    tree.destroy()
 
     this.treeCount--
     await this.storage.saveArea('tree-count', this.treeCount)
 
-    this.updateRenderersAndArrays()
+    this.updatePermutation()
 
     console.log(`Removed tree. Total: ${this.treeCount}`)
   }
@@ -394,6 +389,10 @@ export class Forest {
     this.treesFramebuffer = this.createFramebufferWithDepth(this.treesTexture, this.treesDepthBuffer)
     this.shadowMap = this.createShadowTexture()
     this.shadowFramebuffer = this.createFramebuffer(this.shadowMap)
+    
+    // Update resolution for all trees
+    const resVec = vec2.fromValues(width, height)
+    this.trees.forEach(tree => tree.setResolution(resVec))
   }
 
   private createTexture(): WebGLTexture {
@@ -547,10 +546,8 @@ export class Forest {
       }
     }
 
-    // Update phase: Update all renderers (they may update their flow textures if dirty)
-    for (let i = 0; i < this.renderers.length; i++) {
-      this.renderers[i]!.update()
-    }
+    // Update phase
+    // Done in loop below
 
     // Step 1: Render all trees to trees texture with depth in alpha
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.treesFramebuffer)
@@ -578,38 +575,18 @@ export class Forest {
       if (bumpTime < 0) continue // Future bump?
 
       // Distribute boost across selected trees with optional versatz
-      // Since we don't have strict ordering in indices for versatz, assume index order in the list is the sequence
       const invCount = bump.indices.length > 1 ? 1.0 / (bump.indices.length - 1) : 0
       
       for (let i = 0; i < bump.indices.length; i++) {
         const p = i * invCount
-        // Apply versatz: each tree starts later
         const treeDelay = p * versatz * bump.duration
         const t = (bumpTime - treeDelay) / bump.duration
         
         if (t >= 0 && t <= 1) {
-          // Bump function: xs = x * s; y = xs * (1-x) / (xs+1)^2 scaled to peak at 1 approx?
-          // Actually the function y = xs * (1-x) / (xs+1)^2 is small. 
-          // Let's use standard simpler bump: sin(pi*t)^s ? No.
-          // Let's use the provided reference logic:
-          // xs = x * s
-          // y = xs * (1 - x) / (xs + 1)^2
-          // Max value of this function depends on s.
-          // At s=14, max is around 0.06. This is small.
-          // We need to normalize or scale it?
-          // The reference code multiplies by bump.size (velocity * 2).
-          // And "bumpSizeFactor".
-          // If I want peak 1, I should normalize.
-          // For simplicity, let's use a known normalized bump: t^2 * (1-t)^2 * 16 (Bell shape)
-          // Or Attack/Decay.
-          // Let's stick to reference math but maybe scale it up if needed. 
-          // Let's try multiplying by 20 to get useful range if s=14.
-          
           const xs = t * s
           const xsp1 = xs + 1
           const y = xs * (1 - t) / (xsp1 * xsp1)
           
-          // Scale factor to make it visible (approx 15-20x for s=14)
           const scale = 20.0 
           treeBoosts[bump.indices[i]!] += Math.max(0, y * scale) * bump.size
         }
@@ -617,13 +594,16 @@ export class Forest {
     }
 
     // Render phase: Render all trees to our framebuffer
-    for (let i = 0; i < this.renderers.length; i++) {
-      // Base time animation
-      const baseTime = time * this.treeSpeeds[i]! * 0.1
-      // Add audio offset if audio is enabled
-      const totalTime = baseTime + (this.audioEnabled ? this.audioOffsets[i]! : 0)
-      // Pass boost
-      this.renderers[i]!.render(totalTime, this.treesFramebuffer, this.treeDepths[i]!, this.treeBoosts ? this.treeBoosts[i] : treeBoosts[i], debugMode)
+    const speedScale = this.speedScaleFader.value
+    const barPhase = this.clock.getBar() % 1
+    const pulse = Math.sin(barPhase * Math.PI) // 0 -> 1 -> 0 over one bar
+    const speedPulseAmount = this.speedPulseFader.value
+    const pulseFactor = 1.0 * (1.0 - speedPulseAmount) + pulse * speedPulseAmount // Lerp between 1 and pulse
+
+    for (let i = 0; i < this.trees.length; i++) {
+      const tree = this.trees[i]!
+      tree.update(deltaTime, speedScale, pulseFactor)
+      tree.render(this.treesFramebuffer, treeBoosts[i]!, debugMode)
     }
 
     gl.disable(gl.DEPTH_TEST)
@@ -691,7 +671,7 @@ export class Forest {
   }
 
   private processAudio(audioData: any, deltaTime: number) {
-    const numTrees = this.areas.length
+    const numTrees = this.trees.length
     const minFreq = 30
     const maxFreq = 5000
     const sampleRate = 44100 // Typical sample rate
@@ -701,7 +681,8 @@ export class Forest {
     const freqRangePerTree = (maxFreq - minFreq) / numTrees
 
     for (let i = 0; i < numTrees; i++) {
-      const freqIndex = this.areas[i]!.metadata!.frequencyIndex as number
+      const tree = this.trees[i]!
+      const freqIndex = tree.frequencyIndex
 
       // Calculate frequency range for this tree
       const freqStart = minFreq + freqIndex * freqRangePerTree
@@ -723,30 +704,22 @@ export class Forest {
       // Normalize from dB (-100 to 0) to 0-1 range
       const normalizedEnergy = Math.max(0, Math.min(1, (avgEnergyDb + 100) / 100))
 
-      // Debug first tree's raw data occasionally
-      if (i === 0 && Math.random() < 0.01) {
-        console.log('Tree 0 - Bins:', binStart, 'to', binEnd, 'avgDb:', avgEnergyDb.toFixed(2), 'normalized:', normalizedEnergy.toFixed(3))
-      }
-
       // Smooth energy
-      // audioSmoothingAmount: 0 = instant, 1 = smooth
       const smoothFactor = Math.min(1, deltaTime * 3 * (1 - this.audioSmoothingFader.value))
-      this.smoothedEnergies[i] = this.smoothedEnergies[i]! + (normalizedEnergy - this.smoothedEnergies[i]!) * smoothFactor
+      tree.smoothedEnergy = tree.smoothedEnergy + (normalizedEnergy - tree.smoothedEnergy) * smoothFactor
 
-      // Accumulate audio offset (sensitivity can be adjusted)
-      const audioScale = this.audioScaleFader.value
-      this.audioOffsets[i] = this.audioOffsets[i]! + this.smoothedEnergies[i]! * deltaTime * audioScale
-
-      // Debug first tree occasionally
-      if (i === 0 && Math.random() < 0.01) {
-        console.log('Audio scale:', audioScale, 'energy:', this.smoothedEnergies[i], 'offset delta:', this.smoothedEnergies[i]! * deltaTime * audioScale)
-      }
+      // Accumulate audio offset
+      // NOTE: Audio controls were removed from UI, so this effectively does nothing unless re-enabled in code
+      // Keeping logic structure for future use
+      // const audioScale = this.audioScaleFader.value // Removed
+      const audioScale = 0 // Disabled
+      tree.audioOffset += tree.smoothedEnergy * deltaTime * audioScale
     }
   }
 
   shuffleFrequencies() {
     // Create array of indices
-    const indices = Array.from({ length: this.areas.length }, (_, i) => i)
+    const indices = Array.from({ length: this.trees.length }, (_, i) => i)
 
     // Fisher-Yates shuffle
     for (let i = indices.length - 1; i > 0; i--) {
@@ -755,9 +728,8 @@ export class Forest {
     }
 
     // Assign shuffled indices to trees
-    for (let i = 0; i < this.areas.length; i++) {
-      this.areas[i]!.metadata!.frequencyIndex = indices[i]
-      this.areas[i]!.save()
+    for (let i = 0; i < this.trees.length; i++) {
+      this.trees[i]!.frequencyIndex = indices[i]!
     }
 
     console.log('Shuffled frequency assignments')
@@ -765,73 +737,74 @@ export class Forest {
 
   randomizeDepths() {
     // Generate new random depths for all trees
-    for (let i = 0; i < this.areas.length; i++) {
+    for (let i = 0; i < this.trees.length; i++) {
       const newDepth = Math.random()
-      this.treeDepths[i] = newDepth
-      this.areas[i]!.metadata!.depth = newDepth
-      this.areas[i]!.save()
+      this.trees[i]!.depth = newDepth
     }
+  }
 
-    // Clear shadow map since depth relationships changed
-    // gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFramebuffer)
-    // gl.clearColor(0, 0, 0, 0)
-    // gl.clear(gl.COLOR_BUFFER_BIT)
-    // gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+  randomizeSpeeds() {
+    // Generate new random speeds for all trees
+    for (let i = 0; i < this.trees.length; i++) {
+      const newSpeed = Math.random() // 0 to 1
+      this.trees[i]!.speed = newSpeed
+    }
+    console.log('Randomized tree speeds')
   }
 
   // Tree selection methods
   selectNextTree() {
-    if (this.areas.length === 0) return
+    if (this.trees.length === 0) return
 
     // Find currently selected tree
-    const currentIndex = this.areas.findIndex(area => area.isSelected())
+    const currentIndex = this.trees.findIndex(t => t.area.isSelected())
 
     // Deselect current
     if (currentIndex !== -1) {
-      this.areas[currentIndex]!.setSelected(false)
+      this.trees[currentIndex]!.area.setSelected(false)
     }
 
     // Select next (wrap around)
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % this.areas.length
-    this.areas[nextIndex]!.setSelected(true)
-    this.webMapper.setSelectedArea(this.areas[nextIndex]!)
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % this.trees.length
+    this.trees[nextIndex]!.area.setSelected(true)
+    this.webMapper.setSelectedArea(this.trees[nextIndex]!.area)
     console.log(`Tree ${nextIndex} selected`)
   }
 
   selectPreviousTree() {
-    if (this.areas.length === 0) return
+    if (this.trees.length === 0) return
 
     // Find currently selected tree
-    const currentIndex = this.areas.findIndex(area => area.isSelected())
+    const currentIndex = this.trees.findIndex(t => t.area.isSelected())
 
     // Deselect current
     if (currentIndex !== -1) {
-      this.areas[currentIndex]!.setSelected(false)
+      this.trees[currentIndex]!.area.setSelected(false)
     }
 
     // Select previous (wrap around)
-    const prevIndex = currentIndex === -1 ? this.areas.length - 1 : (currentIndex - 1 + this.areas.length) % this.areas.length
-    this.areas[prevIndex]!.setSelected(true)
-    this.webMapper.setSelectedArea(this.areas[prevIndex]!)
+    const prevIndex = currentIndex === -1 ? this.trees.length - 1 : (currentIndex - 1 + this.trees.length) % this.trees.length
+    this.trees[prevIndex]!.area.setSelected(true)
+    this.webMapper.setSelectedArea(this.trees[prevIndex]!.area)
     console.log(`Tree ${prevIndex} selected`)
   }
 
   deselectTree() {
-    for (const area of this.areas) {
-      area.setSelected(false)
+    for (const tree of this.trees) {
+      tree.area.setSelected(false)
     }
     console.log('Tree deselected')
   }
 
   getSelectedTreeIndex(): number {
-    return this.areas.findIndex(area => area.isSelected())
+    return this.trees.findIndex(t => t.area.isSelected())
   }
 
   increaseOctaves() {
     const selectedIndex = this.getSelectedTreeIndex()
     if (selectedIndex === -1) return
 
-    const area = this.areas[selectedIndex]!
+    const area = this.trees[selectedIndex]!.area
     const currentOctaves = area.metadata!.octaves || 0
     const newOctaves = Math.min(8, currentOctaves + 1)
 
@@ -846,7 +819,7 @@ export class Forest {
     const selectedIndex = this.getSelectedTreeIndex()
     if (selectedIndex === -1) return
 
-    const area = this.areas[selectedIndex]!
+    const area = this.trees[selectedIndex]!.area
     const currentOctaves = area.metadata!.octaves || 0
     const newOctaves = Math.max(0, currentOctaves - 1)
 
@@ -861,16 +834,16 @@ export class Forest {
     const selectedIndex = this.getSelectedTreeIndex()
     if (selectedIndex === -1) return
 
-    const currentArea = this.areas[selectedIndex]!
-    const currentDepth = currentArea.metadata!.depth!
+    const currentTree = this.trees[selectedIndex]!
+    const currentDepth = currentTree.depth
 
     // Find the tree with the closest depth that is smaller (closer to camera)
     let targetIndex = -1
     let maxDepthBelow = -1
 
-    for (let i = 0; i < this.areas.length; i++) {
+    for (let i = 0; i < this.trees.length; i++) {
       if (i === selectedIndex) continue
-      const d = this.areas[i]!.metadata!.depth!
+      const d = this.trees[i]!.depth
       if (d < currentDepth && d > maxDepthBelow) {
         maxDepthBelow = d
         targetIndex = i
@@ -882,17 +855,11 @@ export class Forest {
       return
     }
 
-    const targetArea = this.areas[targetIndex]!
+    const targetTree = this.trees[targetIndex]!
 
     // Swap depths
-    currentArea.metadata!.depth = maxDepthBelow
-    targetArea.metadata!.depth = currentDepth
-    
-    this.treeDepths[selectedIndex] = maxDepthBelow
-    this.treeDepths[targetIndex] = currentDepth
-
-    currentArea.save()
-    targetArea.save()
+    currentTree.depth = maxDepthBelow
+    targetTree.depth = currentDepth
 
     console.log(`Swapped tree ${selectedIndex} depth (${currentDepth.toFixed(3)}) with tree ${targetIndex} (${maxDepthBelow.toFixed(3)})`)
   }
@@ -901,16 +868,16 @@ export class Forest {
     const selectedIndex = this.getSelectedTreeIndex()
     if (selectedIndex === -1) return
 
-    const currentArea = this.areas[selectedIndex]!
-    const currentDepth = currentArea.metadata!.depth!
+    const currentTree = this.trees[selectedIndex]!
+    const currentDepth = currentTree.depth
 
     // Find the tree with the closest depth that is larger (further away)
     let targetIndex = -1
     let minDepthAbove = 2 // Start higher than max possible depth (1.0)
 
-    for (let i = 0; i < this.areas.length; i++) {
+    for (let i = 0; i < this.trees.length; i++) {
       if (i === selectedIndex) continue
-      const d = this.areas[i]!.metadata!.depth!
+      const d = this.trees[i]!.depth
       if (d > currentDepth && d < minDepthAbove) {
         minDepthAbove = d
         targetIndex = i
@@ -922,17 +889,11 @@ export class Forest {
       return
     }
 
-    const targetArea = this.areas[targetIndex]!
+    const targetTree = this.trees[targetIndex]!
 
     // Swap depths
-    currentArea.metadata!.depth = minDepthAbove
-    targetArea.metadata!.depth = currentDepth
-    
-    this.treeDepths[selectedIndex] = minDepthAbove
-    this.treeDepths[targetIndex] = currentDepth
-
-    currentArea.save()
-    targetArea.save()
+    currentTree.depth = minDepthAbove
+    targetTree.depth = currentDepth
 
     console.log(`Swapped tree ${selectedIndex} depth (${currentDepth.toFixed(3)}) with tree ${targetIndex} (${minDepthAbove.toFixed(3)})`)
   }
@@ -964,36 +925,20 @@ export class Forest {
     ), () => this.decreaseOctaves())
 
     this.randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args('randomize depths', 0, 0, 20, 15, '#8a4')
+      new Controls.Base.Args('randomize depths', 40, 60, 20, 15, '#8a4')
     ), () => this.randomizeDepths())
+
+    this.randomizeSpeedsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('randomize speeds', 40, 75, 20, 15, '#8a4')
+    ), () => this.randomizeSpeeds())
 
     this.previousTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('previous tree', 0, 45, 20, 15, '#5a8')
     ), () => this.selectPreviousTree())
-
-    this.nextTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args('next tree', 20, 45, 20, 15, '#5a8')
-    ), () => this.selectNextTree())
-
-    this.deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args('deselect tree', 40, 45, 20, 15, '#858')
-    ), () => this.deselectTree())
     
     this.shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args('shuffle frequencies', 40, 0, 20, 15, '#a58')
+      new Controls.Base.Args('shuffle frequencies', 80, 60, 20, 15, '#a58')
     ), () => this.shuffleFrequencies())
-
-    // Toggle (faders are initialized inline at class level)
-    this.audioToggle = new Controls.Switch.Receiver(
-      new Controls.Switch.Spec(
-        new Controls.Base.Args('audio reactivity', 20, 0, 20, 15, '#a85'),
-        false
-      ),
-      async () => {
-        const result = await this.toggleAudioReactivity()
-        return result
-      }
-    )
 
     // Organize into tabs
     const treesControls = {
@@ -1002,6 +947,7 @@ export class Forest {
       'move up': this.moveTreeUpPad,
       'move down': this.moveTreeDownPad,
       'randomize depths': this.randomizeDepthsPad,
+      'randomize speeds': this.randomizeSpeedsPad,
       'previous tree': this.previousTreePad,
       'next tree': this.nextTreePad,
       'deselect tree': this.deselectTreePad,
@@ -1013,9 +959,8 @@ export class Forest {
       'shadow amount': this.shadowAmountFader,
       'light amount': this.lightAmountFader,
       'shadow offset': this.shadowOffsetFader,
-      'audio scale': this.audioScaleFader,
-      'audio smoothing': this.audioSmoothingFader,
-      'audio reactivity': this.audioToggle,
+      'speed scale': this.speedScaleFader,
+      'speed pulse': this.speedPulseFader,
     }
 
     const treesGroup = new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
