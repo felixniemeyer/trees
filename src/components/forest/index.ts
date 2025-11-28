@@ -816,9 +816,17 @@ export class Forest {
       new Controls.Base.Args('move up', 0, 60, 20, 15, '#6a8')
     ), () => this.moveSelectedTreeUp())
 
+    this.increaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('increase octaves', 20, 60, 20, 15, '#4a5')
+    ), () => this.increaseOctaves())
+
     this.moveTreeDownPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('move down', 0, 75, 20, 15, '#6a8')
     ), () => this.moveSelectedTreeDown())
+
+    this.decreaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('decrease octaves', 20, 75, 20, 15, '#5a4')
+    ), () => this.decreaseOctaves())
 
     this.randomizeDepthsPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('randomize depths', 0, 0, 20, 15, '#8a4')
@@ -835,15 +843,7 @@ export class Forest {
     this.deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('deselect tree', 40, 45, 20, 15, '#858')
     ), () => this.deselectTree())
-
-    this.increaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args('increase octaves', 60, 45, 20, 15, '#4a5')
-    ), () => this.increaseOctaves())
-
-    this.decreaseOctavesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
-      new Controls.Base.Args('decrease octaves', 80, 45, 20, 15, '#5a4')
-    ), () => this.decreaseOctaves())
-
+    
     this.shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('shuffle frequencies', 40, 0, 20, 15, '#a58')
     ), () => this.shuffleFrequencies())
@@ -871,6 +871,7 @@ export class Forest {
       'deselect tree': this.deselectTreePad,
       'increase octaves': this.increaseOctavesPad,
       'decrease octaves': this.decreaseOctavesPad,
+      'shuffle frequencies': this.shuffleFrequenciesPad,
       'shadow size': this.shadowSizeFader,
       'shadow alpha': this.shadowAlphaFader,
       'shadow amount': this.shadowAmountFader,
@@ -879,7 +880,6 @@ export class Forest {
       'audio scale': this.audioScaleFader,
       'audio smoothing': this.audioSmoothingFader,
       'audio reactivity': this.audioToggle,
-      'shuffle frequencies': this.shuffleFrequenciesPad,
     }
   }
 
