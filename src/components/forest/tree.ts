@@ -1,16 +1,67 @@
-import { TriangleStripArtworkRenderer } from './artwork-renderer'
-import { TriangleStripArea, type WebMapper, type ProjRenderContext } from 'web-mapper'
-import { vec2 } from 'gl-matrix'
+import { TriangleStripArea, ProjRenderContext, WebMapper } from 'web-mapper'
+import { vec2, vec3 } from 'gl-matrix'
+import ShaderProgram from 'web-mapper/dist/utils/shader-program'
+
+import flowVs from './shaders/triangle-strip-flow.vs'
+import flowFs from './shaders/triangle-strip-flow.fs'
+import textureMappingVs from './shaders/texture-mapping.vs'
+import textureMappingFs from './shaders/texture-mapping.fs'
 
 export class Tree {
   public area: TriangleStripArea
-  public renderer: TriangleStripArtworkRenderer
   
   // Runtime state
   public offset: number = 0
   public audioOffset: number = 0
   public smoothedEnergy: number = 0
+  public pulsePhaseOffset: number = Math.random() // Random offset for pulse phase
+
+  // Renderer properties (moved from TriangleStripArtworkRenderer)
+  private gl: WebGL2RenderingContext
+  private renderContext: ProjRenderContext
+  private webMapper: WebMapper
+  private resolution = vec2.create()
+
+  private program: ShaderProgram
+  private textureMappingProgram: ShaderProgram
+  private vao: WebGLVertexArrayObject
+  private positionBuffer: WebGLBuffer
+  private uvBuffer: WebGLBuffer
+
+  // Texture mapping VAO and buffers
+  private textureMappingVAO: WebGLVertexArrayObject
+  private textureMappingPositionBuffer: WebGLBuffer
+  private textureMappingPhotoCoordBuffer: WebGLBuffer
+
+  private generatedTexture: WebGLTexture
+  private textureWidth = 0
+  private textureHeight = 0
+
+  private vertexCount = 0
+  private unsubscribeArea?: () => void
+  private unsubscribePhoto?: () => void
+  private unsubscribeRenderContext?: () => void
+
+  // Photo data
+  private photoTexture: WebGLTexture | null = null
+  private photoDimensions: vec2 | null = null
+
+  // Regeneration flag to avoid duplicate work
+  private needsRegeneration = false
   
+  // Distance calculation results for texture generation (pixel space)
+  private evenDistances: number[] = []
+  private oddDistances: number[] = []
+  private normalizedEvenUVs: number[] = []
+  private normalizedOddUVs: number[] = []
+
+  // Distance calculation results for proj mode rendering (3D space)
+  private evenDistances3D: number[] = []
+  private oddDistances3D: number[] = []
+  private normalizedEvenUVs3D: number[] = []
+  private normalizedOddUVs3D: number[] = []
+
+
   constructor(
     area: TriangleStripArea,
     gl: WebGL2RenderingContext,
@@ -19,10 +70,71 @@ export class Tree {
     resolution: vec2
   ) {
     this.area = area
-    this.renderer = new TriangleStripArtworkRenderer(area, gl, renderContext, webMapper)
-    this.renderer.setResolution(resolution)
-  }
+    this.gl = gl
+    this.renderContext = renderContext
+    this.webMapper = webMapper
+    this.resolution = resolution
+    
+    this.program = new ShaderProgram(this.gl, flowVs, flowFs)
+    this.textureMappingProgram = new ShaderProgram(this.gl, textureMappingVs, textureMappingFs)
 
+    // Create VAO for triangle strip artwork rendering
+    this.vao = this.gl.createVertexArray()!
+    this.gl.bindVertexArray(this.vao)
+
+    // Position buffer (vec3)
+    this.positionBuffer = this.gl.createBuffer()!
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer)
+    this.gl.enableVertexAttribArray(0)
+    this.gl.vertexAttribPointer(0, 3, this.gl.FLOAT, false, 0, 0)
+
+    // UV buffer (vec2)
+    this.uvBuffer = this.gl.createBuffer()!
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uvBuffer)
+    this.gl.enableVertexAttribArray(1)
+    this.gl.vertexAttribPointer(1, 2, this.gl.FLOAT, false, 0, 0)
+
+    this.gl.bindVertexArray(null)
+
+    // Create VAO for texture mapping
+    this.textureMappingVAO = this.gl.createVertexArray()!
+    this.gl.bindVertexArray(this.textureMappingVAO)
+
+    // Position buffer (vec2 in NDC)
+    this.textureMappingPositionBuffer = this.gl.createBuffer()!
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.textureMappingPositionBuffer)
+    this.gl.enableVertexAttribArray(0)
+    this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0)
+
+    // Photo pixel coordinate buffer (vec2)
+    this.textureMappingPhotoCoordBuffer = this.gl.createBuffer()!
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.textureMappingPhotoCoordBuffer)
+    this.gl.enableVertexAttribArray(1)
+    this.gl.vertexAttribPointer(1, 2, this.gl.FLOAT, false, 0, 0)
+
+    this.gl.bindVertexArray(null)
+
+    // Create texture for photo mapping
+    this.generatedTexture = this.gl.createTexture()!
+
+    // Subscribe to area changes
+    this.unsubscribeArea = this.area.subscribe(() => {
+      this.needsRegeneration = true
+    })
+
+    // Subscribe to photo changes
+    this.unsubscribePhoto = this.webMapper.subscribeToPhotoChanges((texture, dimensions) => {
+      this.photoTexture = texture
+      this.photoDimensions = dimensions
+      this.needsRegeneration = true
+    })
+
+    // Subscribe to projection context changes (e.g., resize)
+    this.unsubscribeRenderContext = this.renderContext.subscribe(() => {
+      this.needsRegeneration = true
+    })
+  }
+  
   get speed(): number {
     return this.area.metadata?.speed || 0
   }
@@ -53,23 +165,398 @@ export class Tree {
     this.area.save()
   }
 
-  update(deltaTime: number, speedScale: number, pulseFactor: number) {
-    this.renderer.update()
+  // Update geometry (from TriangleStripArtworkRenderer)
+  private updateGeometry(dimensions: vec2) {
+    this.calculateDistances(dimensions)
+    this.updateTexture()
+    this.updateVertexBuffers()
+  }
+
+  private calculateDistances(dimensions: vec2) {
+    const points = this.area.points
+    const pointCount = points.length
+
+    if (pointCount < 2) return
+
+    // Convert photoPos to pixel space for texture generation
+    const pixelPositions: vec2[] = []
+    for (let i = 0; i < pointCount; i++) {
+      const photoPos = points[i]!.photoPos
+      const pixelPos = vec2.fromValues(
+        (photoPos[0] * 0.5 + 0.5) * dimensions[0],
+        (photoPos[1] * 0.5 + 0.5) * dimensions[1]
+      )
+      pixelPositions.push(pixelPos)
+    }
+
+    // Calculate pixel-based distances for texture generation
+    this.evenDistances = new Array(pointCount).fill(0)
+    for (let i = 0; i < pointCount - 2; i += 2) {
+      const dist = vec2.distance(pixelPositions[i]!, pixelPositions[i + 2]!)
+      this.evenDistances[i + 2] = this.evenDistances[i]! + dist
+    }
+
+    this.oddDistances = new Array(pointCount).fill(0)
+    for (let i = 1; i < pointCount - 2; i += 2) {
+      const dist = vec2.distance(pixelPositions[i]!, pixelPositions[i + 2]!)
+      this.oddDistances[i + 2] = this.oddDistances[i]! + dist
+    }
+
+    // Normalize pixel-based distances for texture generation
+    const lastEvenIndex = pointCount % 2 === 0 ? pointCount - 2 : pointCount - 1
+    const lastOddIndex = pointCount % 2 === 0 ? pointCount - 1 : pointCount - 2
+    const maxEvenDistance = this.evenDistances[lastEvenIndex]!
+    const maxOddDistance = this.oddDistances[lastOddIndex]!
+
+    this.normalizedEvenUVs = this.evenDistances.map(d => d / maxEvenDistance)
+    this.normalizedOddUVs = this.oddDistances.map(d => d / maxOddDistance)
+
+    // Calculate texture dimensions
+    const maxDistance = Math.max(maxEvenDistance, maxOddDistance)
+    const edgeDistance0 = vec2.distance(pixelPositions[0]!, pixelPositions[1]!)
+    const edgeDistanceLast = vec2.distance(pixelPositions[pointCount - 2]!, pixelPositions[pointCount - 1]!)
+
+    this.textureWidth = Math.ceil(Math.max(edgeDistance0, edgeDistanceLast))
+    this.textureHeight = Math.ceil(maxDistance)
+
+    // Convert projPos + depth to 3D positions for proj mode rendering
+    const positions3D: vec3[] = []
+    for (let i = 0; i < pointCount; i++) {
+      const point = this.area.points[i]!
+      const pos3D = this.renderContext.get3DPosition(point.position, this.depth)
+      positions3D.push(pos3D)
+    }
+
+    // Calculate 3D-based distances for proj mode rendering
+    this.evenDistances3D = new Array(pointCount).fill(0)
+    for (let i = 0; i < pointCount - 2; i += 2) {
+      const dist = vec3.distance(positions3D[i]!, positions3D[i + 2]!)
+      this.evenDistances3D[i + 2] = this.evenDistances3D[i]! + dist
+    }
+
+    this.oddDistances3D = new Array(pointCount).fill(0)
+    for (let i = 1; i < pointCount - 2; i += 2) {
+      const dist = vec3.distance(positions3D[i]!, positions3D[i + 2]!)
+      this.oddDistances3D[i + 2] = this.oddDistances3D[i]! + dist
+    }
+
+    // Normalize 3D-based distances for proj mode rendering
+    const maxEvenDistance3D = this.evenDistances3D[pointCount % 2 === 0 ? pointCount - 2 : pointCount - 1]!
+    const maxOddDistance3D = this.oddDistances3D[pointCount % 2 === 0 ? pointCount - 1 : pointCount - 2]!
+
+    this.normalizedEvenUVs3D = this.evenDistances3D.map(d => d / maxEvenDistance3D)
+    this.normalizedOddUVs3D = this.oddDistances3D.map(d => d / maxOddDistance3D)
+  }
+
+  private updateTexture() {
+    if (this.textureWidth === 0 || this.textureHeight === 0) return
+
+    const gl = this.gl
+
+    // Create framebuffer for rendering to texture
+    const framebuffer = gl.createFramebuffer()
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)
+
+    // Setup generated texture
+    gl.bindTexture(gl.TEXTURE_2D, this.generatedTexture)
+    gl.texImage2D(
+      gl.TEXTURE_2D, 0, gl.RGBA,
+      this.textureWidth, this.textureHeight,
+      0, gl.RGBA, gl.UNSIGNED_BYTE, null
+    )
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT)
+
+    // Attach texture to framebuffer
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
+      gl.TEXTURE_2D, this.generatedTexture, 0
+    )
+
+    // Check framebuffer status
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error('Framebuffer not complete')
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.deleteFramebuffer(framebuffer)
+      return
+    }
+
+    // Set viewport to texture dimensions for texture rendering
+    gl.viewport(0, 0, this.textureWidth, this.textureHeight)
+
+    // Clear texture
+    gl.clearColor(0, 0, 0, 1)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+
+    // Render photo mapped onto texture using pixel positions and normalized distances
+    if (!this.photoTexture || !this.photoDimensions) {
+      // No photo available, just leave texture black
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.deleteFramebuffer(framebuffer)
+      return
+    }
+
+    const points = this.area.points
+    const pointCount = points.length
+
+    if (pointCount < 2) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.deleteFramebuffer(framebuffer)
+      return
+    }
+
+    // Build vertex data: positions in NDC and photo pixel coordinates
+    // x = 1 for left column (even indices), x = -1 for right column (odd indices) - flipped to match orientation
+    // y = normalizedDistance * 2 - 1 (converting [0,1] to [-1,1])
+    const positions: number[] = []
+    const photoPixelCoords: number[] = []
+
+    // Convert photoPos to pixel space for all points
+    const pixelPositions: vec2[] = []
+    for (let i = 0; i < pointCount; i++) {
+      const photoPos = points[i]!.photoPos
+      const pixelPos = vec2.fromValues(
+        (photoPos[0] * 0.5 + 0.5) * this.photoDimensions[0],
+        (photoPos[1] * 0.5 + 0.5) * this.photoDimensions[1]
+      )
+      pixelPositions.push(pixelPos)
+    }
+
+    // Build triangle strip: alternate between even (left) and odd (right) points
+    for (let i = 0; i < pointCount; i++) {
+      const isEven = i % 2 === 0
+      const x = isEven ? -1.0 : 1.0
+      const normalizedY = isEven ? this.normalizedEvenUVs[i]! : this.normalizedOddUVs[i]!
+      const y = normalizedY * 2.0 - 1.0
+
+      positions.push(x, y)
+      photoPixelCoords.push(pixelPositions[i]![0], pixelPositions[i]![1])
+    }
+
+    // Update buffers
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.textureMappingPositionBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.textureMappingPhotoCoordBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(photoPixelCoords), gl.DYNAMIC_DRAW)
+
+    // Render using texture mapping shader
+    this.textureMappingProgram.use()
+
+    // Set uniforms
+    gl.uniform2fv(this.textureMappingProgram.uniLocs.photoDimensions, this.photoDimensions as Float32Array)
+
+    // Bind photo texture
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.photoTexture)
+    gl.uniform1i(this.textureMappingProgram.uniLocs.photoTexture, 0)
+
+    // Draw triangle strip
+    gl.bindVertexArray(this.textureMappingVAO)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, pointCount)
+    gl.bindVertexArray(null)
+
+    // Cleanup: restore framebuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.deleteFramebuffer(framebuffer)
+
+    // Note: viewport will be set properly in render() method
+  }
+
+  private subdivideSide(sidePoints: vec3[], sideUVs: number[], cyclic: boolean = false): { positions: vec3[], uvs: number[] } {
+    if (sidePoints.length < 2) return { positions: sidePoints, uvs: sideUVs }
+
+    const newPositions: vec3[] = []
+    const newUVs: number[] = []
+    const n = sidePoints.length
+    const omega = 1.0 / 16.0
+
+    // Helper function to get point with cyclic/replicate boundary handling
+    const getPoint = (index: number): vec3 => {
+      if (cyclic) {
+        // Cyclic: wrap around using modulo
+        const wrappedIndex = ((index % n) + n) % n
+        return sidePoints[wrappedIndex]!
+      } else {
+        // Replicate: clamp to boundaries
+        const clampedIndex = Math.max(0, Math.min(n - 1, index))
+        return sidePoints[clampedIndex]!
+      }
+    }
+
+    for (let i = 0; i < sidePoints.length; i++) {
+      // Add current point
+      newPositions.push(vec3.clone(sidePoints[i]!))
+      newUVs.push(sideUVs[i]!)
+
+      // Insert subdivided point between current and next (except after last point in non-cyclic mode)
+      if (i < sidePoints.length - 1 || cyclic) {
+        // 4-point interpolation scheme for C¹ smoothness
+        // Q_i = -ω·P_{i-1} + (1/2 + ω)·P_i + (1/2 + ω)·P_{i+1} - ω·P_{i+2}
+        const P_prev = getPoint(i - 1)
+        const P_i = sidePoints[i]!
+        const P_next = getPoint(i + 1)
+        const P_after = getPoint(i + 2)
+
+        const newPoint = vec3.create()
+        vec3.scaleAndAdd(newPoint, newPoint, P_prev, -omega)
+        vec3.scaleAndAdd(newPoint, newPoint, P_i, 0.5 + omega)
+        vec3.scaleAndAdd(newPoint, newPoint, P_next, 0.5 + omega)
+        vec3.scaleAndAdd(newPoint, newPoint, P_after, -omega)
+
+        newPositions.push(newPoint)
+
+        // UV for subdivided point is midpoint of adjacent UVs
+        const nextIndex = cyclic ? (i + 1) % n : i + 1
+        const uvMid = (sideUVs[i]! + sideUVs[nextIndex]!) / 2
+        newUVs.push(uvMid)
+      }
+    }
+
+    return { positions: newPositions, uvs: newUVs }
+  }
+
+  private updateVertexBuffers() {
+    const points = this.area.points
+    const pointCount = points.length
+
+    if (pointCount < 2) return
+
+    // Get octaves from metadata (default 0 = no subdivision)
+    const octaves = this.area.metadata?.octaves || 0
+
+    // Separate even and odd points
+    const evenPoints: vec3[] = []
+    const evenUVs: number[] = []
+    const oddPoints: vec3[] = []
+    const oddUVs: number[] = []
+
+    for (let i = 0; i < pointCount; i++) {
+      const point = this.area.points[i]!
+      const pos3D = this.renderContext.get3DPosition(point.position, this.depth)
+
+      if (i % 2 === 0) {
+        evenPoints.push(pos3D)
+        evenUVs.push(this.normalizedEvenUVs3D[i]!)
+      } else {
+        oddPoints.push(pos3D)
+        oddUVs.push(this.normalizedOddUVs3D[i]!)
+      }
+    }
+
+    // Apply subdivision octaves to each side independently
+    let evenResult = { positions: evenPoints, uvs: evenUVs }
+    let oddResult = { positions: oddPoints, uvs: oddUVs }
+
+    for (let oct = 0; oct < octaves; oct++) {
+      evenResult = this.subdivideSide(evenResult.positions, evenResult.uvs, false)
+      oddResult = this.subdivideSide(oddResult.positions, oddResult.uvs, false)
+    }
+
+    // Interleave subdivided points back into triangle strip order
+    const positions: number[] = []
+    const uvs: number[] = []
+
+    const maxLength = Math.max(evenResult.positions.length, oddResult.positions.length)
+    for (let i = 0; i < maxLength; i++) {
+      if (i < evenResult.positions.length) {
+        const pos = evenResult.positions[i]!
+        positions.push(pos[0], pos[1], pos[2])
+        uvs.push(0.0, evenResult.uvs[i]!)
+      }
+
+      if (i < oddResult.positions.length) {
+        const pos = oddResult.positions[i]!
+        positions.push(pos[0], pos[1], pos[2])
+        uvs.push(1.0, oddResult.uvs[i]!)
+      }
+    }
+
+    this.vertexCount = positions.length / 3
+
+    // Update buffers
+    const gl = this.gl
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer)
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uvs), gl.DYNAMIC_DRAW)
+  }
+
+  update(deltaTime: number, speedScale: number, barPhase: number, speedPulseAmount: number) {
+    // Check if we need to regenerate geometry (photo or area changed)
+    if (this.needsRegeneration && this.photoTexture && this.photoDimensions) {
+      this.updateGeometry(this.photoDimensions)
+      this.needsRegeneration = false
+    }
     
+    // Calculate pulse factor based on tree's individual phase offset
+    // Pulse modulates speed around 1.0, preserving average speed
+    const pulse = Math.sin((barPhase + this.pulsePhaseOffset) * 2.0 * Math.PI)
+    const pulseFactor = 1.0 + speedPulseAmount * pulse
+
     const instantaneousSpeed = this.speed * speedScale * pulseFactor * 0.1
     this.offset += instantaneousSpeed * deltaTime
   }
 
   render(targetFramebuffer: WebGLFramebuffer | null, boost: number, debugMode: number) {
-    const totalTime = this.offset + this.audioOffset
-    this.renderer.render(totalTime, targetFramebuffer, this.depth, boost, debugMode)
+    if (this.vertexCount < 2 || !this.photoTexture) return
+
+    const gl = this.gl
+
+    // Framebuffer and viewport are set by Forest
+    this.program.use()
+
+    // Read selection state from area
+    const isSelected = this.area.isSelected()
+
+    // Set uniforms
+    const projMatrix = this.renderContext.getProjectionMatrix()
+    gl.uniformMatrix4fv(
+      this.program.uniLocs.projectionMatrix,
+      false,
+      projMatrix
+    )
+    gl.uniform1f(this.program.uniLocs.time, this.offset + this.audioOffset)
+    gl.uniform1f(this.program.uniLocs.u_depth, isSelected ? 0.0 : this.depth) // Use this.depth
+    gl.uniform1f(this.program.uniLocs.u_selected, isSelected ? 1.0 : 0.0)
+    gl.uniform1f(this.program.uniLocs.u_boost, boost)
+    gl.uniform1i(this.program.uniLocs.u_debugMode, debugMode)
+
+    // Bind generated texture (for now it's empty, but structure is ready)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.generatedTexture)
+    gl.uniform1i(this.program.uniLocs.photoTexture, 0)
+
+    // Draw triangle strip
+    gl.bindVertexArray(this.vao)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, this.vertexCount)
+    gl.bindVertexArray(null)
   }
 
   setResolution(res: vec2) {
-    this.renderer.setResolution(res)
+    this.resolution = vec2.clone(res)
   }
-
+  
   destroy() {
-    this.renderer.destroy()
+    if (this.unsubscribeArea) {
+      this.unsubscribeArea()
+    }
+    if (this.unsubscribePhoto) {
+      this.unsubscribePhoto()
+    }
+    if (this.unsubscribeRenderContext) {
+      this.unsubscribeRenderContext()
+    }
+    this.gl.deleteVertexArray(this.vao)
+    this.gl.deleteBuffer(this.positionBuffer)
+    this.gl.deleteBuffer(this.uvBuffer)
+    this.gl.deleteVertexArray(this.textureMappingVAO)
+    this.gl.deleteBuffer(this.textureMappingPositionBuffer)
+    this.gl.deleteBuffer(this.textureMappingPhotoCoordBuffer)
+    this.gl.deleteTexture(this.generatedTexture)
   }
 }

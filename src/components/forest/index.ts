@@ -1,4 +1,3 @@
-import { TriangleStripArtworkRenderer } from './artwork-renderer'
 import { Tree } from './tree'
 import ShaderProgram from 'web-mapper/src/utils/shader-program'
 import { TriangleStripArea, type WebMapper, type ProjRenderContext, Point } from 'web-mapper'
@@ -596,13 +595,11 @@ export class Forest {
     // Render phase: Render all trees to our framebuffer
     const speedScale = this.speedScaleFader.value
     const barPhase = this.clock.getBar() % 1
-    const pulse = Math.sin(barPhase * Math.PI) // 0 -> 1 -> 0 over one bar
-    const speedPulseAmount = this.speedPulseFader.value
-    const pulseFactor = 1.0 * (1.0 - speedPulseAmount) + pulse * speedPulseAmount // Lerp between 1 and pulse
+    const speedPulseAmount = this.speedPulseFader.value // Only amount here, actual pulse factor calculated in Tree
 
     for (let i = 0; i < this.trees.length; i++) {
       const tree = this.trees[i]!
-      tree.update(deltaTime, speedScale, pulseFactor)
+      tree.update(deltaTime, speedScale, barPhase, speedPulseAmount)
       tree.render(this.treesFramebuffer, treeBoosts[i]!, debugMode)
     }
 
