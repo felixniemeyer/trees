@@ -724,48 +724,82 @@ export class Forest {
 
   moveSelectedTreeUp() {
     const selectedIndex = this.getSelectedTreeIndex()
-    if (selectedIndex === -1 || selectedIndex === 0) return // Already at top
+    if (selectedIndex === -1) return
 
     const currentArea = this.areas[selectedIndex]!
-    const previousArea = this.areas[selectedIndex - 1]!
+    const currentDepth = currentArea.metadata!.depth!
 
-    // Swap depth values
-    const tempDepth = this.treeDepths[selectedIndex]!
-    this.treeDepths[selectedIndex] = this.treeDepths[selectedIndex - 1]!
-    this.treeDepths[selectedIndex - 1] = tempDepth
+    // Find the tree with the closest depth that is smaller (closer to camera)
+    let targetIndex = -1
+    let maxDepthBelow = -1
 
-    // Update metadata
-    currentArea.metadata!.depth = this.treeDepths[selectedIndex]
-    previousArea.metadata!.depth = this.treeDepths[selectedIndex - 1]
+    for (let i = 0; i < this.areas.length; i++) {
+      if (i === selectedIndex) continue
+      const d = this.areas[i]!.metadata!.depth!
+      if (d < currentDepth && d > maxDepthBelow) {
+        maxDepthBelow = d
+        targetIndex = i
+      }
+    }
 
-    // Save both areas
+    if (targetIndex === -1) {
+      console.log('Already at top (closest)')
+      return
+    }
+
+    const targetArea = this.areas[targetIndex]!
+
+    // Swap depths
+    currentArea.metadata!.depth = maxDepthBelow
+    targetArea.metadata!.depth = currentDepth
+    
+    this.treeDepths[selectedIndex] = maxDepthBelow
+    this.treeDepths[targetIndex] = currentDepth
+
     currentArea.save()
-    previousArea.save()
+    targetArea.save()
 
-    console.log(`Moved tree ${selectedIndex} up (depth: ${this.treeDepths[selectedIndex]})`)
+    console.log(`Swapped tree ${selectedIndex} depth (${currentDepth.toFixed(3)}) with tree ${targetIndex} (${maxDepthBelow.toFixed(3)})`)
   }
 
   moveSelectedTreeDown() {
     const selectedIndex = this.getSelectedTreeIndex()
-    if (selectedIndex === -1 || selectedIndex === this.areas.length - 1) return // Already at bottom
+    if (selectedIndex === -1) return
 
     const currentArea = this.areas[selectedIndex]!
-    const nextArea = this.areas[selectedIndex + 1]!
+    const currentDepth = currentArea.metadata!.depth!
 
-    // Swap depth values
-    const tempDepth = this.treeDepths[selectedIndex]!
-    this.treeDepths[selectedIndex] = this.treeDepths[selectedIndex + 1]!
-    this.treeDepths[selectedIndex + 1] = tempDepth
+    // Find the tree with the closest depth that is larger (further away)
+    let targetIndex = -1
+    let minDepthAbove = 2 // Start higher than max possible depth (1.0)
 
-    // Update metadata
-    currentArea.metadata!.depth = this.treeDepths[selectedIndex]
-    nextArea.metadata!.depth = this.treeDepths[selectedIndex + 1]
+    for (let i = 0; i < this.areas.length; i++) {
+      if (i === selectedIndex) continue
+      const d = this.areas[i]!.metadata!.depth!
+      if (d > currentDepth && d < minDepthAbove) {
+        minDepthAbove = d
+        targetIndex = i
+      }
+    }
 
-    // Save both areas
+    if (targetIndex === -1) {
+      console.log('Already at bottom (furthest)')
+      return
+    }
+
+    const targetArea = this.areas[targetIndex]!
+
+    // Swap depths
+    currentArea.metadata!.depth = minDepthAbove
+    targetArea.metadata!.depth = currentDepth
+    
+    this.treeDepths[selectedIndex] = minDepthAbove
+    this.treeDepths[targetIndex] = currentDepth
+
     currentArea.save()
-    nextArea.save()
+    targetArea.save()
 
-    console.log(`Moved tree ${selectedIndex} down (depth: ${this.treeDepths[selectedIndex]})`)
+    console.log(`Swapped tree ${selectedIndex} depth (${currentDepth.toFixed(3)}) with tree ${targetIndex} (${minDepthAbove.toFixed(3)})`)
   }
 
   getControls() {
