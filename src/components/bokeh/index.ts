@@ -46,7 +46,9 @@ export class BokehArtwork {
   
   
   // Controls
-  private colorARgbFader = new RGBFaders('color a', 0, 0, 50, 50, [1, 0, 0])
+  private colorAR!: LFOControl
+  private colorAG!: LFOControl
+  private colorAB!: LFOControl
   private colorBRgbFader = new RGBFaders('color b', 50, 0, 50, 50, [0, 0.8, 1])
   private intensityColorFader = new RGBFaders('intensity color', 0, 50, 50, 50, [1, 0.5, 0], 0, 2)
   
@@ -168,6 +170,10 @@ export class BokehArtwork {
     this.copyProgram = new ShaderProgram(gl, copyVs, copyFs)
 
     // Initialize LFOs early
+    this.colorAR = new LFOControl('red a', this.clock, 0, 0, 16, 50, 1, 0, 1, '#f00')
+    this.colorAG = new LFOControl('green a', this.clock, 16, 0, 16, 50, 0, 0, 1, '#0f0')
+    this.colorAB = new LFOControl('blue a', this.clock, 32, 0, 18, 50, 0, 0, 1, '#00f')
+
     this.focusDistanceLFO = new LFOControl(
       'focus distance', this.clock, 0, 0, 20, 50, 0, -1, 1, '#941'
     )
@@ -439,7 +445,6 @@ export class BokehArtwork {
   private update(deltaTime: number) {
     // Update RGB controls
     const sustain = Math.pow(0.5, deltaTime)
-    this.colorARgbFader.update(sustain)
     this.colorBRgbFader.update(sustain)
     this.intensityColorFader.update(sustain)
     this.zCenterFader.update(sustain)
@@ -532,7 +537,11 @@ export class BokehArtwork {
     gl.uniform1f(renderUniLocs.particleSize, this.particleSizeFader.value)
     gl.uniform1f(renderUniLocs.maxFd, this.maxFdFader.value)
     
-    gl.uniform3fv(renderUniLocs.colorA, this.colorARgbFader.getValues())
+    gl.uniform3fv(renderUniLocs.colorA, [
+      this.colorAR.getValue(),
+      this.colorAG.getValue(),
+      this.colorAB.getValue()
+    ])
     gl.uniform3fv(renderUniLocs.colorB, this.colorBRgbFader.getValues())
     gl.uniform3fv(renderUniLocs.intensityColor, this.intensityColorFader.getValues())
     
@@ -607,7 +616,9 @@ export class BokehArtwork {
     ), visualControls)
     
     const colorControls = {
-      ...this.colorARgbFader.getControls(),
+      ...this.colorAR.getControls(),
+      ...this.colorAG.getControls(),
+      ...this.colorAB.getControls(),
       ...this.colorBRgbFader.getControls(),
       ...this.intensityColorFader.getControls(),
       'blink amount': this.blinkAmountFader,

@@ -48,7 +48,9 @@ export class Feedback {
     new Controls.Base.Args('decay subtract', 80, 50, 20, 50, '#f84'), 0.01, 0.0, 1.0, 3
   ))
 
-  private tintFaders = new RGBFaders('tint', 20, 50, 60, 50, [1, 1, 1], 0.9, 1)
+  private tintR!: LFOControl
+  private tintG!: LFOControl
+  private tintB!: LFOControl
 
   unsubscribes: (() => void)[] = []
   requireAreaUpdate = true
@@ -89,6 +91,10 @@ export class Feedback {
     this.sustainControl = new LFOControl(
       'sustain', this.clock, 80, 0, 20, 50, 0.9, 0.001, 1.0, '#8a8'
     )
+
+    this.tintR = new LFOControl('tint r', this.clock, 20, 50, 20, 50, 1, 0.9, 1, '#f00')
+    this.tintG = new LFOControl('tint g', this.clock, 40, 50, 20, 50, 1, 0.9, 1, '#0f0')
+    this.tintB = new LFOControl('tint b', this.clock, 60, 50, 20, 50, 1, 0.9, 1, '#00f')
 
     // Subscribe to area changes
     let unsubscribe = this.area.subscribe(() => {
@@ -246,8 +252,11 @@ export class Feedback {
     
     // Update and set tint
     const sustain = Math.pow(0.5, deltaTime)
-    this.tintFaders.update(sustain)
-    gl.uniform3fv(this.program.uniLocs.u_tint, this.tintFaders.getValues())
+    gl.uniform3fv(this.program.uniLocs.u_tint, [
+      this.tintR.getValue(),
+      this.tintG.getValue(),
+      this.tintB.getValue()
+    ])
 
     // Bind textures
     gl.activeTexture(gl.TEXTURE0)
@@ -306,7 +315,9 @@ export class Feedback {
       ...this.mixFactorControl.getControls(),
       ...this.sustainControl.getControls(),
       'decay subtract': this.decaySubtractControl,
-      ...this.tintFaders.getControls(),
+      ...this.tintR.getControls(),
+      ...this.tintG.getControls(),
+      ...this.tintB.getControls(),
     }
     
     return new Controls.Group.Receiver(new Controls.Group.SpecWithoutControls(
