@@ -171,6 +171,8 @@ export class Forest {
       this.clock,
       80, 15, 20, 30,
       0.2,
+      -0.1, // min
+      0.4, // max
       '#58a'
     )
 

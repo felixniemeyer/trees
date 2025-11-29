@@ -231,6 +231,8 @@ export class BokehArtwork {
       this.clock,
       0, 0, 20, 50, // x, y, width, height (from original fader)
       0, // initial value
+      -1, // min
+      1, // max
       '#941' // color (from original fader)
     )
 

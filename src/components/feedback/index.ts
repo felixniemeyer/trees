@@ -3,7 +3,7 @@ import { GridArea, ProjRenderContext } from "web-mapper"
 import ShaderProgram from "web-mapper/src/utils/shader-program"
 import { RectVao } from "../../utils/basic-vaos"
 import { Controls } from "av-controls"
-import { RGBFaders, Clock } from "time-n-controls"
+import { RGBFaders, Clock, LFOControl, TapPatternPair } from "time-n-controls"
 
 import feedbackVs from "./shaders/feedback.vs"
 import feedbackFs from "./shaders/feedback.fs"
@@ -38,27 +38,17 @@ export class Feedback {
     new Controls.Base.Args('noise frequency', 0, 0, 20, 50, '#88a'), 14.0, 1, 50, 2
   ))
 
-  private noiseSpeedControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('noise speed', 20, 0, 20, 50, '#8aa'), 0.16, 0.01, 1, 2
-  ))
-
-  private noiseStrengthControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('lookup length', 40, 0, 20, 50, '#aa8'), 0.2, 0, 0.5, 2
-  ))
-
-  private sustainControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('sustain', 60, 0, 20, 50, '#8a8'), 0.9, 0.001, 1.0, 3
-  ))
-
-  private mixFactorControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('mix factor', 80, 0, 20, 50, '#a8a'), 0.1, 0.0, 1.0, 2
-  ))
+  private rndFreqControl!: TapPatternPair
+  private noiseSpeedControl!: LFOControl
+  private noiseStrengthControl!: LFOControl
+  private sustainControl!: LFOControl
+  private mixFactorControl!: LFOControl
 
   private decaySubtractControl = new Controls.Fader.Receiver(new Controls.Fader.Spec(
-    new Controls.Base.Args('decay subtract', 60, 50, 20, 50, '#f84'), 0.01, 0.0, 1.0, 3
+    new Controls.Base.Args('decay subtract', 80, 50, 20, 50, '#f84'), 0.01, 0.0, 1.0, 3
   ))
 
-  private tintFaders = new RGBFaders('tint', 0, 50, 60, 50, [1, 1, 1], 0.9, 1)
+  private tintFaders = new RGBFaders('tint', 20, 50, 60, 50, [1, 1, 1], 0.9, 1)
 
   unsubscribes: (() => void)[] = []
   requireAreaUpdate = true
@@ -72,6 +62,33 @@ export class Feedback {
     this.program = new ShaderProgram(gl, feedbackVs, feedbackFs)
     this.displayProgram = new ShaderProgram(gl, feedbackVs, displayFs)
     this.rectVao = new RectVao(gl)
+
+    // Initialize Controls
+    this.rndFreqControl = new TapPatternPair(
+      'rnd freq', 0, 50, 20, 50, '#88a',
+      this.clock,
+      (velocity) => {
+        const min = 1
+        const max = 50
+        this.noiseFrequFader.value = min + Math.random() * (max - min)
+      }
+    )
+
+    this.noiseSpeedControl = new LFOControl(
+      'noise speed', this.clock, 20, 0, 20, 50, 0.16, 0.01, 1.0, '#8aa'
+    )
+
+    this.noiseStrengthControl = new LFOControl(
+      'lookup length', this.clock, 40, 0, 20, 50, 0.2, 0.001, 0.5, '#aa8'
+    )
+
+    this.mixFactorControl = new LFOControl(
+      'mix factor', this.clock, 60, 0, 20, 50, 0.9, 0.001, 1.0, '#a8a'
+    )
+
+    this.sustainControl = new LFOControl(
+      'sustain', this.clock, 80, 0, 20, 50, 0.9, 0.001, 1.0, '#8a8'
+    )
 
     // Subscribe to area changes
     let unsubscribe = this.area.subscribe(() => {
@@ -196,7 +213,7 @@ export class Feedback {
     this.program.use()
 
     // Update noise time
-    this.noiseTime += deltaTime * this.noiseSpeedControl.value
+    this.noiseTime += deltaTime * this.noiseSpeedControl.getValue()
     gl.uniform1f(this.program.uniLocs.u_time, this.noiseTime)
 
     // Calculate input transform
@@ -210,11 +227,11 @@ export class Feedback {
 
     // Uniforms
     gl.uniform1f(this.program.uniLocs.u_noiseScale, this.noiseFrequFader.value)
-    gl.uniform1f(this.program.uniLocs.u_noiseStrength, this.noiseStrengthControl.value * 10.0) // Adjust scaling
+    gl.uniform1f(this.program.uniLocs.u_noiseStrength, this.noiseStrengthControl.getValue() * 100.0) // Adjust scaling
     
     // Use time-corrected sustain: value represents fraction remaining after 1 second
     // Apply squaring to the fader value for a more exponential response
-    const faderValueSquared = Math.pow(this.sustainControl.value, 2);
+    const faderValueSquared = Math.pow(this.sustainControl.getValue(), 2);
     const frameSustain = Math.pow(faderValueSquared, deltaTime);
     gl.uniform1f(this.program.uniLocs.u_sustain, frameSustain)
     
@@ -224,7 +241,7 @@ export class Feedback {
     const frameSubtract = subtractPerSec * deltaTime
     gl.uniform1f(this.program.uniLocs.u_decaySubtract, frameSubtract)
     
-    gl.uniform1f(this.program.uniLocs.u_mixFactor, this.mixFactorControl.value)
+    gl.uniform1f(this.program.uniLocs.u_mixFactor, this.mixFactorControl.getValue())
     gl.uniform2fv(this.program.uniLocs.u_aspect, this.aspect)
     
     // Update and set tint
@@ -282,11 +299,12 @@ export class Feedback {
 
   getControls(): Controls.Group.Receiver {
     const controls = {
-      'noise scale': this.noiseFrequFader,
-      'noise speed': this.noiseSpeedControl,
-      'noise strength': this.noiseStrengthControl,
-      'sustain': this.sustainControl,
-      'mix factor': this.mixFactorControl,
+      'noise frequency': this.noiseFrequFader,
+      ...this.rndFreqControl.getControls(),
+      ...this.noiseSpeedControl.getControls(),
+      ...this.noiseStrengthControl.getControls(),
+      ...this.mixFactorControl.getControls(),
+      ...this.sustainControl.getControls(),
       'decay subtract': this.decaySubtractControl,
       ...this.tintFaders.getControls(),
     }
