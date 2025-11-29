@@ -79,7 +79,7 @@ export class Feedback {
     )
 
     this.noiseStrengthControl = new LFOControl(
-      'lookup length', this.clock, 40, 0, 20, 50, 0.2, 0.001, 0.5, '#aa8'
+      'lookup length', this.clock, 40, 0, 20, 50, 2.0, 0.0, 15.0, '#aa8'
     )
 
     this.mixFactorControl = new LFOControl(
@@ -227,7 +227,7 @@ export class Feedback {
 
     // Uniforms
     gl.uniform1f(this.program.uniLocs.u_noiseScale, this.noiseFrequFader.value)
-    gl.uniform1f(this.program.uniLocs.u_noiseStrength, this.noiseStrengthControl.getValue() * 100.0) // Adjust scaling
+    gl.uniform1f(this.program.uniLocs.u_noiseStrength, this.noiseStrengthControl.getValue()) // Adjust scaling
     
     // Use time-corrected sustain: value represents fraction remaining after 1 second
     // Apply squaring to the fader value for a more exponential response
