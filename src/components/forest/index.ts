@@ -934,6 +934,14 @@ export class Forest {
     this.previousTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('previous tree', 0, 45, 20, 15, '#5a8')
     ), () => this.selectPreviousTree())
+
+    this.nextTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('next tree', 20, 45, 20, 15, '#5a8')
+    ), () => this.selectNextTree())
+
+    this.deselectTreePad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
+      new Controls.Base.Args('deselect tree', 40, 45, 20, 15, '#858')
+    ), () => this.deselectTree())
     
     this.shuffleFrequenciesPad = new Controls.Pad.Receiver(new Controls.Pad.Spec(
       new Controls.Base.Args('shuffle frequencies', 80, 60, 20, 15, '#a58')
