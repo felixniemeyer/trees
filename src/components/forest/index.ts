@@ -364,7 +364,7 @@ export class Forest {
 
     this.bumps.push({
       start: this.clock.getBeat(),
-      size: velocity * this.lightUpTap.amountFader.value,
+      size: velocity * this.lightUpTap.amountFader.value * 2.0,
       duration: this.bumpDuration.value,
       indices: indices
     })

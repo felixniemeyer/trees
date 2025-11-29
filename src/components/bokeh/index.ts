@@ -89,11 +89,7 @@ export class BokehArtwork {
     )
   )
   
-  private speedFader = new SmoothFader(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('speed', 60, 0, 20, 50, '#419'), 0.25, 0, 1.5, 2
-    )
-  )
+  private speedFader!: LFOControl
   
   
   private dofAmountFader = new Controls.Fader.Receiver(
@@ -138,37 +134,13 @@ export class BokehArtwork {
   
   private focusDistanceLFO: LFOControl // Renamed to avoid confusion with original fader name
   
-  private intensityFactorFader = new Controls.Fader.Receiver(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('intensity factor', 20, 0, 20, 50, '#491'), 0.45, 0, 2, 2
-    )
-  )
+  private intensityFactorFader!: LFOControl
   
-  private driftAmountFader = new Controls.Fader.Receiver(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('drift amount', 0, 0, 20, 50, '#919'), 0.05, 0, 0.2, 2
-    ),
-    (value: number) => {
-      this.updateProgram.use()
-      this.gl.uniform1f(this.updateProgram.uniLocs.driftAmount, value)
-    }
-  )
+  private driftAmountFader!: LFOControl
   
-  private noiseAmountFader = new Controls.Fader.Receiver(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('noise amount', 20, 0, 20, 50, '#919'), 0.1, 0, 0.5, 2
-    ),
-    (value: number) => {
-      this.updateProgram.use()
-      this.gl.uniform1f(this.updateProgram.uniLocs.noiseAmount, value)
-    }
-  )
+  private noiseAmountFader!: LFOControl
   
-  private yWindBaseFader = new SmoothFader(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('y wind base', 80, 0, 20, 50, '#919'), 0.0, -1, 1, 3
-    )
-  )
+  private yWindBaseFader!: LFOControl
 
   private useStencilSwitch = new Controls.Switch.Receiver(
     new Controls.Switch.Spec(
@@ -195,6 +167,31 @@ export class BokehArtwork {
     this.renderProgram = new ShaderProgram(gl, renderVs, renderFs)
     this.copyProgram = new ShaderProgram(gl, copyVs, copyFs)
 
+    // Initialize LFOs early
+    this.focusDistanceLFO = new LFOControl(
+      'focus distance', this.clock, 0, 0, 20, 50, 0, -1, 1, '#941'
+    )
+
+    this.speedFader = new LFOControl(
+      'speed', this.clock, 60, 0, 20, 50, 0.25, 0, 1.5, '#419'
+    )
+
+    this.intensityFactorFader = new LFOControl(
+      'intensity factor', this.clock, 20, 0, 20, 50, 0.45, 0, 2, '#491'
+    )
+
+    this.driftAmountFader = new LFOControl(
+      'drift amount', this.clock, 0, 0, 20, 50, 0.05, 0, 0.2, '#919'
+    )
+
+    this.noiseAmountFader = new LFOControl(
+      'noise amount', this.clock, 20, 0, 20, 50, 0.1, 0, 0.5, '#919'
+    )
+
+    this.yWindBaseFader = new LFOControl(
+      'y wind base', this.clock, 80, 0, 20, 50, 0.0, -1, 1, '#919'
+    )
+
     // Set derivative hint to potentially improve fragment precision
     gl.hint(gl.FRAGMENT_SHADER_DERIVATIVE_HINT, gl.NICEST)
 
@@ -206,8 +203,8 @@ export class BokehArtwork {
     this.updateProgram.use()
     const updateUniLocs = this.updateProgram.uniLocs
     gl.uniform1i(updateUniLocs.inPosTex, 0)
-    gl.uniform1f(updateUniLocs.driftAmount, this.driftAmountFader.value)
-    gl.uniform1f(updateUniLocs.noiseAmount, this.noiseAmountFader.value * (1 + excitement * 2.5))
+    gl.uniform1f(updateUniLocs.driftAmount, this.driftAmountFader.getValue())
+    gl.uniform1f(updateUniLocs.noiseAmount, this.noiseAmountFader.getValue() * (1 + excitement * 2.5))
     gl.uniform1f(updateUniLocs.zCenter, this.zCenterFader.getValue())
     gl.uniform1f(updateUniLocs.time, 0)
     
@@ -225,17 +222,6 @@ export class BokehArtwork {
       }
     }
     
-    // Initialize LFO for focus distance
-    this.focusDistanceLFO = new LFOControl(
-      'focus distance', // Name for the main fader and modal
-      this.clock,
-      0, 0, 20, 50, // x, y, width, height (from original fader)
-      0, // initial value
-      -1, // min
-      1, // max
-      '#941' // color (from original fader)
-    )
-
     // Setup corner vertex buffer for all instances
     this.cornerBuffer = gl.createBuffer()!
     const corners = new Float32Array([
@@ -457,10 +443,11 @@ export class BokehArtwork {
     this.colorBRgbFader.update(sustain)
     this.intensityColorFader.update(sustain)
     this.zCenterFader.update(sustain)
-    this.yWindBaseFader.update(sustain)
-    this.speedFader.update(sustain)
     
     const gl = this.gl
+    
+    // Excitement for scaling noise and yWind
+    const excitement = 0 
     
     this.updateProgram.use()
 
@@ -468,10 +455,12 @@ export class BokehArtwork {
     this.noiseTime += deltaTime * this.noiseTimeScaleFader.value
 
     const updateUniLocs = this.updateProgram.uniLocs
+    gl.uniform1i(updateUniLocs.inPosTex, 0)
+    gl.uniform1f(updateUniLocs.driftAmount, this.driftAmountFader.getValue())
+    gl.uniform1f(updateUniLocs.noiseAmount, this.noiseAmountFader.getValue() * (1 + excitement * 2.5))
     gl.uniform1f(updateUniLocs.time, this.noiseTime)
     gl.uniform2fv(updateUniLocs.aspect, this.aspect)
     
-    const excitement = 0
     const yWind = this.yWindBaseFader.getValue() * (1 + excitement * 1.5) 
     gl.uniform1f(updateUniLocs.yWind, yWind)
     gl.uniform1f(updateUniLocs.speed, this.speedFader.getValue() ** 2)
@@ -528,7 +517,7 @@ export class BokehArtwork {
     const renderUniLocs = this.renderProgram.uniLocs
     
     gl.uniform1i(renderUniLocs.invNumParticles, 1 / (this.sqrtNumParticles * this.sqrtNumParticles))
-    gl.uniform1f(renderUniLocs.intensityFactor, this.intensityFactorFader.value)
+    gl.uniform1f(renderUniLocs.intensityFactor, this.intensityFactorFader.getValue())
     
     gl.uniform1f(renderUniLocs.invMaxDistance, 1 / ProjRenderContext.FAR_PLANE)
     gl.uniform1f(renderUniLocs.maxDistanceSlope, ProjRenderContext.FAR_PLANE)
@@ -588,10 +577,10 @@ export class BokehArtwork {
 
   getControls(): Controls.Tabs.Receiver {
     const physicsControls = {
-      'drift amount': this.driftAmountFader,
-      'noise amount': this.noiseAmountFader,
-      'y wind base': this.yWindBaseFader.getControl(),
-      'speed': this.speedFader.getControl(),
+      ...this.driftAmountFader.getControls(),
+      ...this.noiseAmountFader.getControls(),
+      ...this.yWindBaseFader.getControls(),
+      ...this.speedFader.getControls(),
       'speed boost factor': this.speedBoostFactorFader,
       'noise time scale': this.noiseTimeScaleFader,
       'sqrt num particles': this.sqrtNumParticlesFader,
@@ -604,7 +593,7 @@ export class BokehArtwork {
     ), physicsControls)
     
     const visualControls = {
-      'intensity factor': this.intensityFactorFader,
+      ...this.intensityFactorFader.getControls(),
       ...this.focusDistanceLFO.getControls(),
       'particle size': this.particleSizeFader,
       'max blur': this.maxFdFader,
