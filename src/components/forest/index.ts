@@ -7,7 +7,7 @@ import shadowProcessFs from './shaders/shadow-process.fs'
 import compositeVs from "./shaders/forest-composite.vs"
 import compositeFs from './shaders/composite.fs'
 import { Controls } from 'av-controls'
-import { Clock, TapPatternPairWithAmountFader } from 'time-n-controls'
+import { Clock, TapPatternPairWithAmountFader, LFOControl } from 'time-n-controls'
 import type IndexedDBStorage from 'web-mapper/src/storage/indexdb'
 
 interface Bump {
@@ -82,12 +82,7 @@ export class Forest {
     )
   )
 
-  private shadowOffsetFader = new Controls.Fader.Receiver(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('shadow offset', 80, 15, 20, 30, '#58a'),
-      0.2, -0.1, 0.4, 2
-    )
-  )
+  private shadowOffsetFader!: LFOControl
 
   private speedScaleFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
@@ -169,6 +164,14 @@ export class Forest {
       'light up', 0, 0, 20, 50, '#f84',
       this.clock,
       (velocity: number) => this.triggerLightUp(velocity)
+    )
+    
+    this.shadowOffsetFader = new LFOControl(
+      'shadow offset',
+      this.clock,
+      80, 15, 20, 30,
+      0.2,
+      '#58a'
     )
 
     // Trees will be populated by loadTrees()
@@ -654,7 +657,7 @@ export class Forest {
 
     gl.uniform1f(this.compositeProgram.uniLocs.u_shadowAmount, this.shadowAmountFader.value)
     gl.uniform1f(this.compositeProgram.uniLocs.u_lightAmount, this.lightAmountFader.value)
-    gl.uniform1f(this.compositeProgram.uniLocs.u_shadowOffset, this.shadowOffsetFader.value)
+    gl.uniform1f(this.compositeProgram.uniLocs.u_shadowOffset, this.shadowOffsetFader.getValue())
 
     gl.activeTexture(gl.TEXTURE1)
     gl.bindTexture(gl.TEXTURE_2D, this.shadowMap)
@@ -965,7 +968,7 @@ export class Forest {
       'shadow alpha': this.shadowAlphaFader,
       'shadow amount': this.shadowAmountFader,
       'light amount': this.lightAmountFader,
-      'shadow offset': this.shadowOffsetFader,
+      ...this.shadowOffsetFader.getControls(),
       'speed scale': this.speedScaleFader,
       'speed pulse': this.speedPulseFader,
     }

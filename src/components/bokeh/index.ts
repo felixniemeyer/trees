@@ -3,7 +3,7 @@ import { GridArea, ProjRenderContext } from "web-mapper"
 import ShaderProgram from "utils/shader-program"
 import { RectVao } from "utils/basic-vaos"
 import { Controls } from "av-controls"
-import { SmoothFader, RGBFaders } from "time-n-controls";
+import { SmoothFader, RGBFaders, LFOControl, Clock } from "time-n-controls";
 
 
 import updateVs from "./shaders/update.vs"
@@ -136,12 +136,7 @@ export class BokehArtwork {
     )
   )
   
-  
-  private focusDistanceFader = new Controls.Fader.Receiver(
-    new Controls.Fader.Spec(
-      new Controls.Base.Args('focus offset', 0, 0, 20, 50, '#941'), 0, -1, 1, 2
-    )
-  )
+  private focusDistanceLFO: LFOControl // Renamed to avoid confusion with original fader name
   
   private intensityFactorFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
@@ -151,7 +146,7 @@ export class BokehArtwork {
   
   private driftAmountFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('drift amount', 0, 0, 20, 50, '#919'), 0.05, 0, 0.1, 2
+      new Controls.Base.Args('drift amount', 0, 0, 20, 50, '#919'), 0.05, 0, 0.2, 2
     ),
     (value: number) => {
       this.updateProgram.use()
@@ -161,7 +156,7 @@ export class BokehArtwork {
   
   private noiseAmountFader = new Controls.Fader.Receiver(
     new Controls.Fader.Spec(
-      new Controls.Base.Args('noise amount', 20, 0, 20, 50, '#919'), 0.1, 0, 0.3, 2
+      new Controls.Base.Args('noise amount', 20, 0, 20, 50, '#919'), 0.1, 0, 0.5, 2
     ),
     (value: number) => {
       this.updateProgram.use()
@@ -193,7 +188,8 @@ export class BokehArtwork {
   constructor(
     public area: GridArea,
     private gl: WebGL2RenderingContext,
-    private renderContext: ProjRenderContext
+    private renderContext: ProjRenderContext,
+    private clock: Clock // Added clock here
   ) {
     this.updateProgram = new ShaderProgram(gl, updateVs, updateFs)
     this.renderProgram = new ShaderProgram(gl, renderVs, renderFs)
@@ -229,7 +225,15 @@ export class BokehArtwork {
       }
     }
     
-    
+    // Initialize LFO for focus distance
+    this.focusDistanceLFO = new LFOControl(
+      'focus distance', // Name for the main fader and modal
+      this.clock,
+      0, 0, 20, 50, // x, y, width, height (from original fader)
+      0, // initial value
+      '#941' // color (from original fader)
+    )
+
     // Setup corner vertex buffer for all instances
     this.cornerBuffer = gl.createBuffer()!
     const corners = new Float32Array([
@@ -521,15 +525,18 @@ export class BokehArtwork {
     
     const renderUniLocs = this.renderProgram.uniLocs
     
-    gl.uniform1i(renderUniLocs.sqrtNumParticles, this.sqrtNumParticles)
-    gl.uniform1f(renderUniLocs.invSqrtNumParticles, 1 / this.sqrtNumParticles)
-    gl.uniform1f(renderUniLocs.invNumParticles, 1 / (this.sqrtNumParticles * this.sqrtNumParticles))
+    gl.uniform1i(renderUniLocs.invNumParticles, 1 / (this.sqrtNumParticles * this.sqrtNumParticles))
     gl.uniform1f(renderUniLocs.intensityFactor, this.intensityFactorFader.value)
     
     gl.uniform1f(renderUniLocs.invMaxDistance, 1 / ProjRenderContext.FAR_PLANE)
     gl.uniform1f(renderUniLocs.maxDistanceSlope, ProjRenderContext.FAR_PLANE)
 
-    const focusDistance = this.zCenterFader.getValue() * (1 + this.focusDistanceFader.value)
+    const lfoVal = this.focusDistanceLFO.getValue()
+    const zCenter = this.zCenterFader.getValue()
+    if (Math.random() < 0.01) {
+      console.log(`LFO: ${lfoVal}, zCenter: ${zCenter}`)
+    }
+    const focusDistance = zCenter * (1 + lfoVal)
     gl.uniform1f(renderUniLocs.focusDistance, focusDistance)
     gl.uniform1f(renderUniLocs.particleSize, this.particleSizeFader.value)
     gl.uniform1f(renderUniLocs.maxFd, this.maxFdFader.value)
@@ -596,7 +603,7 @@ export class BokehArtwork {
     
     const visualControls = {
       'intensity factor': this.intensityFactorFader,
-      'focus distance': this.focusDistanceFader,
+      ...this.focusDistanceLFO.getControls(),
       'particle size': this.particleSizeFader,
       'max blur': this.maxFdFader,
       'feather pixel': this.featherFader,

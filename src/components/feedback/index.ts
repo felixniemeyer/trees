@@ -58,7 +58,7 @@ export class Feedback {
     new Controls.Base.Args('decay subtract', 60, 50, 20, 50, '#f84'), 0.01, 0.0, 1.0, 3
   ))
 
-  private tintFaders = new RGBFaders('tint', 0, 50, 60, 50, [1, 1, 1], 0, 1)
+  private tintFaders = new RGBFaders('tint', 0, 50, 60, 50, [1, 1, 1], 0.9, 1)
 
   unsubscribes: (() => void)[] = []
   requireAreaUpdate = true

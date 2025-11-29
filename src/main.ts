@@ -586,7 +586,8 @@ async function initializeProject(projectId: string) {
   const bokehArtwork = new BokehArtwork(
     bokehArea,
     mapper.gl,
-    mapper.projContext
+    mapper.projContext,
+    clock
   )
 
   const feedback = new Feedback(
